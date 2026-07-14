@@ -12,7 +12,11 @@ import { CurrentUser } from "../auth/current-user.decorator";
 import { ApiResponse, success } from "../common/api-response";
 import { WorkType } from "../entities/challenge.entity";
 import { User } from "../entities/user.entity";
-import { ChallengeOutput, ChallengesService } from "./challenges.service";
+import {
+  ChallengeOutput,
+  ChallengeProgressOutput,
+  ChallengesService,
+} from "./challenges.service";
 import { CreateChallengeDto } from "./dto/create-challenges.dto";
 import { UpdateChallengeDto } from "./dto/update-challenges.dto";
 
@@ -59,7 +63,7 @@ export class UserChallengesController {
   @Get()
   async list(
     @CurrentUser() user: User,
-  ): Promise<ApiResponse<ChallengeOutput[]>> {
+  ): Promise<ApiResponse<ChallengeProgressOutput[]>> {
     const result = await this.service.withProgress(user.id);
     return success(result, "도전과제 목록을 성공적으로 불러왔습니다.");
   }
@@ -67,7 +71,7 @@ export class UserChallengesController {
   @Get("achieved")
   async achieved(
     @CurrentUser() user: User,
-  ): Promise<ApiResponse<ChallengeOutput[]>> {
+  ): Promise<ApiResponse<ChallengeProgressOutput[]>> {
     const result = await this.service.achieved(user.id);
     return success(result, "달성한 도전과제 목록을 성공적으로 불러왔습니다.");
   }
@@ -76,7 +80,7 @@ export class UserChallengesController {
   async progress(
     @CurrentUser() user: User,
     @Body("workType") workType: WorkType,
-  ) {
+  ): Promise<ApiResponse<null>> {
     await this.service.record(user.id, workType);
     return success(null, "도전과제 진행상황이 업데이트되었습니다.");
   }
