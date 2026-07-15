@@ -31,7 +31,7 @@ import { UsersModule } from "./users/users.module";
         url: config.get<string>("DATABASE_URL"),
         schema: config.get<string>("DB_SCHEMA", "todo_list"),
         autoLoadEntities: true,
-        synchronize: config.get<string>("DB_SYNC") === "true",
+        synchronize: true,
         logging: config.get<string>("DB_LOGGING") === "true",
       }),
     }),
