@@ -53,6 +53,24 @@ export interface GoalStreakOutput {
   isActive: boolean;
 }
 
+export interface GoalAchievementOutput {
+  data: GoalProcessOutput;
+  achieved: boolean;
+}
+
+export interface GoalDashboardOutput {
+  activeGoals: GoalProcessOutput[];
+  activeStreaks: GoalStreakOutput[];
+  stats: {
+    totalActiveGoals: number;
+    totalAchievedToday: number;
+    totalActiveStreaks: number;
+    longestCurrentStreak: number;
+    maxStreakEver: number;
+    totalStreaksActive: number;
+  };
+}
+
 function goalResponse(goal: Goal): GoalOutput {
   return {
     id: goal.id,
@@ -67,10 +85,7 @@ function goalResponse(goal: Goal): GoalOutput {
   };
 }
 
-function processResponse(
-  process: GoalProcess | null,
-): GoalProcessOutput | null {
-  if (!process) return null;
+function processResponse(process: GoalProcess): GoalProcessOutput {
   const target = process.goal.targetCount;
   const now = new Date(`${today()}T00:00:00Z`);
   const end = new Date(`${process.periodEnd}T00:00:00Z`);
@@ -97,19 +112,17 @@ function processResponse(
   };
 }
 
-function streakResponse(streak: GoalStreak | null): GoalStreakOutput | null {
-  return streak
-    ? {
-        id: streak.id,
-        createdAt: streak.createdAt,
-        updatedAt: streak.updatedAt,
-        goalId: streak.goalId,
-        goalName: streak.goal.name,
-        currentStreak: streak.currentStreak,
-        longestStreak: streak.longestStreak,
-        isActive: streak.currentStreak > 0,
-      }
-    : null;
+function streakResponse(streak: GoalStreak): GoalStreakOutput {
+  return {
+    id: streak.id,
+    createdAt: streak.createdAt,
+    updatedAt: streak.updatedAt,
+    goalId: streak.goalId,
+    goalName: streak.goal.name,
+    currentStreak: streak.currentStreak,
+    longestStreak: streak.longestStreak,
+    isActive: streak.currentStreak > 0,
+  };
 }
 
 @Injectable()
@@ -213,7 +226,7 @@ export class GoalsService {
     goal.targetCount = dto.targetCount;
     return goalResponse(await this.goals.save(goal));
   }
-  async deactivate(userId: number, id: number) {
+  async deactivate(userId: number, id: number): Promise<void> {
     const goal = await this.owned(userId, id);
     goal.isActive = false;
     await this.goals.save(goal);
@@ -224,7 +237,7 @@ export class GoalsService {
       await this.updateStreak(userId, id, currentGoals.isAchieved);
     }
   }
-  async achieve(userId: number, id: number) {
+  async achieve(userId: number, id: number): Promise<GoalAchievementOutput> {
     const goal = await this.owned(userId, id);
     const currentGoals = await this.current(userId, id);
 
@@ -251,7 +264,10 @@ export class GoalsService {
       achieved: currentGoals.isAchieved,
     };
   }
-  async progress(userId: number, id: number) {
+  async progress(
+    userId: number,
+    id: number,
+  ): Promise<GoalProcessOutput | null> {
     const goal = await this.owned(userId, id);
     const currentGoals = await this.current(userId, id);
 
@@ -259,10 +275,13 @@ export class GoalsService {
       currentGoals.goal = goal;
     }
 
-    return processResponse(currentGoals);
+    return currentGoals ? processResponse(currentGoals) : null;
   }
 
-  async streak(userId: number, id: number) {
+  async streak(
+    userId: number,
+    id: number,
+  ): Promise<GoalStreakOutput | null> {
     const goal = await this.owned(userId, id);
     const streak = await this.streaks.findOneBy({ userId, goalId: id });
 
@@ -270,10 +289,10 @@ export class GoalsService {
       streak.goal = goal;
     }
 
-    return streakResponse(streak);
+    return streak ? streakResponse(streak) : null;
   }
 
-  async dashboard(userId: number) {
+  async dashboard(userId: number): Promise<GoalDashboardOutput> {
     const processes = await this.processes.find({
       where: { userId, isFinalized: false },
       relations: { goal: true },
@@ -305,14 +324,14 @@ export class GoalsService {
     };
   }
 
-  private current(userId: number, goalId: number) {
+  private current(userId: number, goalId: number): Promise<GoalProcess | null> {
     return this.processes.findOne({
       where: { userId, goalId, isFinalized: false },
       relations: { goal: true },
     });
   }
 
-  private async owned(userId: number, id: number) {
+  private async owned(userId: number, id: number): Promise<Goal> {
     const goal = await this.goals.findOneBy({ id, userId });
     if (!goal) {
       throw new NotFoundException(`목표를 찾을 수 없습니다: ${id}`);
@@ -325,7 +344,7 @@ export class GoalsService {
     userId: number,
     goalId: number,
     achieved: boolean,
-  ) {
+  ): Promise<void> {
     const streak = await this.streaks.findOneBy({ userId, goalId });
 
     //streak이 존재하지 않으면 아무 작업도 수행하지 않고 종료
@@ -338,7 +357,8 @@ export class GoalsService {
     await this.streaks.save(streak);
   }
 
-  @Cron("0 0 1 * * *", { timeZone: "Asia/Seoul" }) async resetExpired() {
+  @Cron("0 0 1 * * *", { timeZone: "Asia/Seoul" })
+  async resetExpired(): Promise<void> {
     for (const process of await this.processes.find({
       where: { isFinalized: false, periodEnd: LessThan(today()) },
       relations: { goal: true },
