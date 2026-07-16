@@ -120,7 +120,7 @@ export class AuthService {
     });
     if (!user) {
       user = this.users.create({
-        nickname: email.split("@")[0].slice(0, 40),
+        nickname: email.split("@")[0].slice(0, 12),
         email,
         name,
         password: await bcrypt.hash(crypto.randomUUID(), 12),
