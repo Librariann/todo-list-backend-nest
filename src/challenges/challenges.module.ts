@@ -1,7 +1,14 @@
 import { Module } from "@nestjs/common";
 import { TypeOrmModule } from "@nestjs/typeorm";
-import { Challenge, UserProgressChallenge } from "../entities/challenge.entity";
+import {
+  Challenge,
+  ChallengeAssignment,
+  ChallengeRotationRun,
+  ChallengeRotationSetting,
+  UserProgressChallenge,
+} from "../entities/challenge.entity";
 import { PointsModule } from "../points/points.module";
+import { Todo } from "../entities/todo.entity";
 import {
   ChallengesController,
   UserChallengesController,
@@ -9,7 +16,14 @@ import {
 import { ChallengesService } from "./challenges.service";
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Challenge, UserProgressChallenge]),
+    TypeOrmModule.forFeature([
+      Challenge,
+      ChallengeAssignment,
+      ChallengeRotationRun,
+      ChallengeRotationSetting,
+      UserProgressChallenge,
+      Todo,
+    ]),
     PointsModule,
   ],
   controllers: [ChallengesController, UserChallengesController],
