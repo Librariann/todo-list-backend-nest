@@ -14,11 +14,33 @@ import { today } from "../common/date";
 import type { CreateHabitDto } from "./dto/create-habits.dto";
 import type { UpdateHabitDto } from "./dto/update-habits.dto";
 
+export interface HabitOutput {
+  id: number;
+  name: string;
+  description: string | null;
+  dailyTarget: number;
+  unit: string | null;
+  isActive: boolean;
+  createdAt: Date;
+  todayCount: number;
+  todayAchieved: boolean;
+  currentStreak: number;
+  longestStreak: number;
+}
+
+export interface HabitHistoryOutput {
+  id: number;
+  habitId: number;
+  logDate: string;
+  currentCount: number;
+  isAchieved: boolean;
+}
+
 function response(
   habit: Habit,
   log?: HabitLog | null,
   streak?: HabitStreak | null,
-) {
+): HabitOutput {
   return {
     id: habit.id,
     name: habit.name,
@@ -44,7 +66,7 @@ export class HabitsService {
     private readonly challenges: ChallengesService,
   ) {}
 
-  async create(userId: number, dto: CreateHabitDto) {
+  async create(userId: number, dto: CreateHabitDto): Promise<HabitOutput> {
     const existHabits = await this.habits.exists({
       where: { userId, name: dto.name, isActive: true },
     });
@@ -71,7 +93,7 @@ export class HabitsService {
     return response(habit, null, streak);
   }
 
-  async list(userId: number) {
+  async list(userId: number): Promise<HabitOutput[]> {
     const items = await this.habits.find({
       where: { userId, isActive: true },
       order: { createdAt: "DESC" },
@@ -88,7 +110,11 @@ export class HabitsService {
     );
   }
 
-  async update(userId: number, id: number, dto: UpdateHabitDto) {
+  async update(
+    userId: number,
+    id: number,
+    dto: UpdateHabitDto,
+  ): Promise<HabitOutput> {
     const getHabits = await this.owned(userId, id);
     const existsHabits = await this.habits.exists({
       where: { userId, name: dto.name, isActive: true },
@@ -114,12 +140,12 @@ export class HabitsService {
     );
   }
 
-  async deactivate(userId: number, id: number) {
+  async deactivate(userId: number, id: number): Promise<void> {
     const getHabits = await this.owned(userId, id);
     getHabits.isActive = false;
     await this.habits.save(getHabits);
   }
-  async increment(userId: number, id: number) {
+  async increment(userId: number, id: number): Promise<HabitOutput> {
     const getHabits = await this.owned(userId, id);
     let log = await this.logs.findOneBy({
       habitId: id,
@@ -159,7 +185,7 @@ export class HabitsService {
   }
 
   // 습관 카운터 감소
-  async decrement(userId: number, id: number) {
+  async decrement(userId: number, id: number): Promise<HabitOutput> {
     const getHabits = await this.owned(userId, id);
     const log = await this.logs.findOneBy({
       habitId: id,
@@ -186,7 +212,12 @@ export class HabitsService {
     );
   }
 
-  async history(userId: number, id: number, from: string, to: string) {
+  async history(
+    userId: number,
+    id: number,
+    from: string,
+    to: string,
+  ): Promise<HabitHistoryOutput[]> {
     await this.owned(userId, id);
 
     return (
@@ -202,7 +233,7 @@ export class HabitsService {
       isAchieved: log.isAchieved,
     }));
   }
-  private async owned(userId: number, id: number) {
+  private async owned(userId: number, id: number): Promise<Habit> {
     const habits = await this.habits.findOneBy({ id, userId });
 
     if (!habits) {
@@ -215,7 +246,7 @@ export class HabitsService {
   //매일 0시 10분에 Streaks update
   //TODO: 추후 기능 변경 필요 - 매일 0시 10분이 아니라 달성시마다 체크해야함
   @Cron("0 10 0 * * *", { timeZone: "Asia/Seoul" })
-  async updateDailyStreaks() {
+  async updateDailyStreaks(): Promise<void> {
     const date = new Date(`${today()}T00:00:00Z`);
     date.setUTCDate(date.getUTCDate() - 1);
     const yesterday = date.toISOString().slice(0, 10);
