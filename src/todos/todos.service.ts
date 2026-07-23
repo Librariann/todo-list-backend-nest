@@ -13,6 +13,30 @@ import type { CreateTodoDto } from "./dto/create-todos.dto";
 import type { ReorderTodoDto } from "./dto/reorder-todos.dto";
 import type { UpdateTodoDto } from "./dto/update-todos.dto";
 
+export interface TodoOutput {
+  id: number;
+  createdAt: Date;
+  updatedAt: Date;
+  userId: number;
+  name: string;
+  status: TodoStatus;
+  orderIndex: number;
+  targetDate: string;
+}
+
+function todoResponse(todo: Todo): TodoOutput {
+  return {
+    id: todo.id,
+    createdAt: todo.createdAt,
+    updatedAt: todo.updatedAt,
+    userId: todo.userId,
+    name: todo.name,
+    status: todo.status,
+    orderIndex: todo.orderIndex,
+    targetDate: todo.targetDate,
+  };
+}
+
 @Injectable()
 export class TodosService {
   constructor(
@@ -20,13 +44,16 @@ export class TodosService {
     private readonly challenges: ChallengesService,
   ) {}
 
-  list(userId: number, targetDate: string) {
-    return this.todos.find({
+  async list(userId: number, targetDate: string): Promise<TodoOutput[]> {
+    const todos = await this.todos.find({
       where: { userId, targetDate },
       order: { orderIndex: "ASC" },
     });
+
+    return todos.map(todoResponse);
   }
-  async create(userId: number, dto: CreateTodoDto) {
+
+  async create(userId: number, dto: CreateTodoDto): Promise<TodoOutput> {
     const { name, targetDate } = dto;
     const exists = await this.todos.exists({ where: { name } });
     if (exists) {
@@ -38,7 +65,7 @@ export class TodosService {
       order: { orderIndex: "DESC" },
     });
 
-    return this.todos.save(
+    const todo = await this.todos.save(
       this.todos.create({
         userId,
         name,
@@ -47,12 +74,15 @@ export class TodosService {
         orderIndex: (latest?.orderIndex ?? 0) + 1,
       }),
     );
+
+    return todoResponse(todo);
   }
+
   async update(
     userId: number,
     id: number,
     dto: UpdateTodoDto,
-  ) {
+  ): Promise<TodoOutput> {
     const todo = await this.owned(userId, id);
     const existsTodos = await this.todos
       .createQueryBuilder("t")
@@ -64,9 +94,14 @@ export class TodosService {
     }
 
     Object.assign(todo, dto);
-    return this.todos.save(todo);
+    return todoResponse(await this.todos.save(todo));
   }
-  async status(userId: number, id: number, status: TodoStatus) {
+
+  async status(
+    userId: number,
+    id: number,
+    status: TodoStatus,
+  ): Promise<void> {
     const todo = await this.owned(userId, id);
 
     if (todo.status === TodoStatus.DONE && status !== TodoStatus.DONE) {
@@ -89,7 +124,7 @@ export class TodosService {
   async reorder(
     userId: number,
     dto: ReorderTodoDto,
-  ) {
+  ): Promise<void> {
     const { targetDate, indexIds } = dto;
     const owned = await this.list(userId, targetDate);
     const ids = new Set(owned.map((t) => Number(t.id)));
@@ -100,11 +135,11 @@ export class TodosService {
     );
   }
 
-  async remove(userId: number, id: number) {
+  async remove(userId: number, id: number): Promise<void> {
     await this.todos.remove(await this.owned(userId, id));
   }
 
-  private async owned(userId: number, id: number) {
+  private async owned(userId: number, id: number): Promise<Todo> {
     const todo = await this.todos.findOneBy({ id, userId });
     if (!todo) {
       throw new NotFoundException(`할 일을 찾을 수 없습니다: ${id}`);
