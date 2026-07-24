@@ -64,6 +64,9 @@ export class GoalProcess extends BaseEntity {
   @Column({ name: "is_achieved" })
   isAchieved: boolean;
 
+  @Column({ name: "achieved_at", type: "timestamp", nullable: true })
+  achievedAt: Date | null;
+
   @Column({ name: "is_finalized" })
   isFinalized: boolean;
 }
