@@ -9,6 +9,7 @@ export enum PointAction {
 }
 export enum PointReason {
   CHALLENGE = "CHALLENGE",
+  CHALLENGE_REVERSAL = "CHALLENGE_REVERSAL",
   SPEND = "SPEND",
   EXPIRE = "EXPIRE",
   ADJUST = "ADJUST",
