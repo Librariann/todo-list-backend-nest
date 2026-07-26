@@ -4,6 +4,7 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  Matches,
   MaxLength,
   Min,
   MinLength,
@@ -28,6 +29,9 @@ export class CreateGoalDto {
   interval: number;
 
   @IsDateString()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, {
+    message: "목표 시작일은 YYYY-MM-DD 형식이어야 합니다.",
+  })
   startDate: string;
 
   @IsInt()
