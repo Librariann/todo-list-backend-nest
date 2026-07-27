@@ -13,6 +13,7 @@ import { ApiResponse, success } from "../common/api-response";
 import { User } from "../entities/user.entity";
 import {
   GoalDashboardOutput,
+  GoalDateOutput,
   GoalOutput,
   GoalProcessOutput,
   GoalsService,
@@ -36,6 +37,15 @@ export class GoalsController {
   async list(@CurrentUser() user: User): Promise<ApiResponse<GoalOutput[]>> {
     const result = await this.service.list(user.id);
     return success(result, "목표 목록 조회 성공");
+  }
+
+  @Get("by-date/:date")
+  async byDate(
+    @Param("date") date: string,
+    @CurrentUser() user: User,
+  ): Promise<ApiResponse<GoalDateOutput[]>> {
+    const result = await this.service.byDate(user.id, date);
+    return success(result, "선택한 날짜의 목표 조회 성공");
   }
 
   @Get(":id/progress")
