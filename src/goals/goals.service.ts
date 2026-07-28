@@ -6,9 +6,22 @@ import {
 } from "@nestjs/common";
 import { Cron } from "@nestjs/schedule";
 import { InjectRepository } from "@nestjs/typeorm";
-import { LessThan, Repository } from "typeorm";
+import {
+  In,
+  LessThan,
+  LessThanOrEqual,
+  MoreThanOrEqual,
+  Repository,
+} from "typeorm";
 import { ChallengesService } from "../challenges/challenges.service";
-import { addPeriod, PeriodType, today } from "../common/date";
+import {
+  goalPeriodEnd,
+  goalPeriodForDate,
+  goalPeriodForIndex,
+  isValidDateString,
+  PeriodType,
+  today,
+} from "../common/date";
 import { WorkType } from "../entities/challenge.entity";
 import { Goal, GoalProcess, GoalStreak } from "../entities/goal.entity";
 import type { CreateGoalDto } from "./dto/create-goals.dto";
@@ -37,6 +50,7 @@ export interface GoalProcessOutput {
   currentCount: number;
   targetCount: number;
   isAchieved: boolean;
+  achievedAt: Date | null;
   isFinalized: boolean;
   progressPercentage: number;
   daysRemaining: number;
@@ -56,6 +70,25 @@ export interface GoalStreakOutput {
 export interface GoalAchievementOutput {
   data: GoalProcessOutput;
   achieved: boolean;
+}
+
+export type GoalPeriodStatus = "ACTIVE" | "ACHIEVED" | "MISSED" | "UPCOMING";
+
+export interface GoalDateOutput extends GoalOutput {
+  streak: number;
+  period: {
+    id: number | null;
+    index: number;
+    start: string;
+    end: string;
+    currentCount: number;
+    targetCount: number;
+    isAchieved: boolean;
+    isFinalized: boolean;
+    achievedAt: Date | null;
+    status: GoalPeriodStatus;
+    canAchieve: boolean;
+  };
 }
 
 export interface GoalDashboardOutput {
@@ -102,6 +135,7 @@ function processResponse(process: GoalProcess): GoalProcessOutput {
     currentCount: process.currentCount,
     targetCount: target,
     isAchieved: process.isAchieved,
+    achievedAt: process.achievedAt,
     isFinalized: process.isFinalized,
     progressPercentage:
       target > 0 ? Math.min(100, (process.currentCount / target) * 100) : 0,
@@ -140,6 +174,10 @@ export class GoalsService {
 
   //Create Goals
   async create(userId: number, dto: CreateGoalDto): Promise<GoalOutput> {
+    if (dto.startDate < today()) {
+      throw new BadRequestException("지난 날짜에는 목표를 생성할 수 없습니다.");
+    }
+
     const exists = await this.goals.exists({
       where: { userId, name: dto.name, isActive: true },
     });
@@ -165,13 +203,14 @@ export class GoalsService {
         userId,
         periodIndex: 1,
         periodStart: goal.startDate,
-        periodEnd: addPeriod(
+        periodEnd: goalPeriodEnd(
           goal.startDate,
           goal.recurrenceType,
           goal.interval,
         ),
         currentCount: 0,
         isAchieved: false,
+        achievedAt: null,
         isFinalized: false,
       }),
     );
@@ -202,6 +241,86 @@ export class GoalsService {
   async get(userId: number, id: number): Promise<GoalOutput> {
     const goal = await this.owned(userId, id);
     return goalResponse(goal);
+  }
+
+  async byDate(userId: number, date: string): Promise<GoalDateOutput[]> {
+    if (!isValidDateString(date)) {
+      throw new BadRequestException(
+        "조회 날짜는 YYYY-MM-DD 형식이어야 합니다.",
+      );
+    }
+
+    const goals = await this.goals.find({
+      where: { userId, isActive: true, startDate: LessThanOrEqual(date) },
+      order: { createdAt: "DESC" },
+    });
+
+    if (goals.length === 0) return [];
+
+    const goalIds = goals.map((goal) => goal.id);
+    const [processes, streaks] = await Promise.all([
+      this.processes.find({
+        where: {
+          userId,
+          goalId: In(goalIds),
+          periodStart: LessThanOrEqual(date),
+          periodEnd: MoreThanOrEqual(date),
+        },
+      }),
+      this.streaks.find({ where: { userId, goalId: In(goalIds) } }),
+    ]);
+    const processByGoalId = new Map(
+      processes.map((process) => [Number(process.goalId), process]),
+    );
+    const streakByGoalId = new Map(
+      streaks.map((streak) => [Number(streak.goalId), streak.currentStreak]),
+    );
+    const currentDate = today();
+
+    return goals.map((goal) => {
+      const process = processByGoalId.get(Number(goal.id));
+      const calculatedPeriod = goalPeriodForDate(
+        goal.startDate,
+        goal.recurrenceType,
+        goal.interval,
+        date,
+      );
+      const periodStart = process?.periodStart ?? calculatedPeriod.start;
+      const periodEnd = process?.periodEnd ?? calculatedPeriod.end;
+      const isAchieved = process?.isAchieved ?? false;
+      const isFinalized = process?.isFinalized ?? periodEnd < currentDate;
+      const status: GoalPeriodStatus = isAchieved
+        ? "ACHIEVED"
+        : periodEnd < currentDate
+          ? "MISSED"
+          : periodStart > currentDate
+            ? "UPCOMING"
+            : "ACTIVE";
+
+      return {
+        ...goalResponse(goal),
+        streak: streakByGoalId.get(Number(goal.id)) ?? 0,
+        period: {
+          id: process?.id ?? null,
+          index: process?.periodIndex ?? calculatedPeriod.index,
+          start: periodStart,
+          end: periodEnd,
+          currentCount: process?.currentCount ?? 0,
+          targetCount: goal.targetCount,
+          isAchieved,
+          isFinalized,
+          achievedAt: process?.achievedAt ?? null,
+          status,
+          canAchieve:
+            process !== undefined &&
+            date === currentDate &&
+            periodStart <= currentDate &&
+            currentDate <= periodEnd &&
+            !isAchieved &&
+            !isFinalized,
+        },
+      };
+    });
   }
 
   async update(
@@ -239,10 +358,20 @@ export class GoalsService {
   }
   async achieve(userId: number, id: number): Promise<GoalAchievementOutput> {
     const goal = await this.owned(userId, id);
-    const currentGoals = await this.current(userId, id);
+    const currentDate = today();
+    const currentGoals = await this.processes.findOne({
+      where: {
+        userId,
+        goalId: id,
+        isFinalized: false,
+        periodStart: LessThanOrEqual(currentDate),
+        periodEnd: MoreThanOrEqual(currentDate),
+      },
+      relations: { goal: true },
+    });
 
     if (!currentGoals) {
-      throw new NotFoundException("활성 목표 프로세스를 찾을 수 없습니다");
+      throw new BadRequestException("오늘 완료할 수 있는 목표 기간이 아닙니다");
     }
 
     if (currentGoals.isAchieved) {
@@ -253,6 +382,7 @@ export class GoalsService {
 
     if (currentGoals.currentCount >= goal.targetCount) {
       currentGoals.isAchieved = true;
+      currentGoals.achievedAt = new Date();
       await this.challenges.record(userId, WorkType.GOALS);
     }
 
@@ -278,10 +408,7 @@ export class GoalsService {
     return currentGoals ? processResponse(currentGoals) : null;
   }
 
-  async streak(
-    userId: number,
-    id: number,
-  ): Promise<GoalStreakOutput | null> {
+  async streak(userId: number, id: number): Promise<GoalStreakOutput | null> {
     const goal = await this.owned(userId, id);
     const streak = await this.streaks.findOneBy({ userId, goalId: id });
 
@@ -357,7 +484,7 @@ export class GoalsService {
     await this.streaks.save(streak);
   }
 
-  @Cron("0 0 1 * * *", { timeZone: "Asia/Seoul" })
+  @Cron("0 0 0 * * *", { timeZone: "Asia/Seoul" })
   async resetExpired(): Promise<void> {
     for (const process of await this.processes.find({
       where: { isFinalized: false, periodEnd: LessThan(today()) },
@@ -373,19 +500,48 @@ export class GoalsService {
       );
 
       if (process.goal.isActive) {
+        let nextIndex = process.periodIndex + 1;
+        let nextPeriod = goalPeriodForIndex(
+          process.goal.startDate,
+          process.goal.recurrenceType,
+          process.goal.interval,
+          nextIndex,
+        );
+
+        while (nextPeriod.end < today()) {
+          await this.processes.save(
+            this.processes.create({
+              goalId: process.goalId,
+              userId: process.userId,
+              periodIndex: nextIndex,
+              periodStart: nextPeriod.start,
+              periodEnd: nextPeriod.end,
+              currentCount: 0,
+              isAchieved: false,
+              achievedAt: null,
+              isFinalized: true,
+            }),
+          );
+          await this.updateStreak(process.userId, process.goalId, false);
+          nextIndex += 1;
+          nextPeriod = goalPeriodForIndex(
+            process.goal.startDate,
+            process.goal.recurrenceType,
+            process.goal.interval,
+            nextIndex,
+          );
+        }
+
         await this.processes.save(
           this.processes.create({
             goalId: process.goalId,
             userId: process.userId,
-            periodIndex: process.periodIndex + 1,
-            periodStart: today(),
-            periodEnd: addPeriod(
-              today(),
-              process.goal.recurrenceType,
-              process.goal.interval,
-            ),
+            periodIndex: nextIndex,
+            periodStart: nextPeriod.start,
+            periodEnd: nextPeriod.end,
             currentCount: 0,
             isAchieved: false,
+            achievedAt: null,
             isFinalized: false,
           }),
         );
