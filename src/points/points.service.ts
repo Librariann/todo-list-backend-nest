@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
-import { Repository } from "typeorm";
+import { EntityManager, Repository } from "typeorm";
 import { periodKey, PeriodType } from "../common/date";
 import {
   PointAction,
@@ -32,19 +32,89 @@ export class PointsService {
     point: number,
     challengeId: number,
     type: PeriodType,
+    manager?: EntityManager,
+    key = periodKey(type),
   ): Promise<void> {
-    await this.points.save(
-      this.points.create({
+    const points = manager?.getRepository(UserPoint) ?? this.points;
+    const balance = await this.challengeRewardBalance(
+      userId,
+      challengeId,
+      type,
+      key,
+      points,
+    );
+    const credit = point - balance;
+    if (credit <= 0) return;
+
+    await points.save(
+      points.create({
         userId,
         action: PointAction.CREDIT,
         reason: PointReason.CHALLENGE,
         metaType: PointMetaType.CHALLENGE,
         metaId: challengeId,
         periodType: type,
-        periodKey: periodKey(type),
-        point,
+        periodKey: key,
+        point: credit,
       }),
     );
+  }
+
+  async revokeChallenge(
+    userId: number,
+    challengeId: number,
+    type: PeriodType,
+    key: string,
+    manager?: EntityManager,
+  ): Promise<void> {
+    const points = manager?.getRepository(UserPoint) ?? this.points;
+    const balance = await this.challengeRewardBalance(
+      userId,
+      challengeId,
+      type,
+      key,
+      points,
+    );
+    if (balance <= 0) return;
+
+    await points.save(
+      points.create({
+        userId,
+        action: PointAction.DEBIT,
+        reason: PointReason.CHALLENGE_REVERSAL,
+        metaType: PointMetaType.CHALLENGE,
+        metaId: challengeId,
+        periodType: type,
+        periodKey: key,
+        point: balance,
+      }),
+    );
+  }
+
+  private async challengeRewardBalance(
+    userId: number,
+    challengeId: number,
+    type: PeriodType,
+    key: string,
+    points: Repository<UserPoint>,
+  ): Promise<number> {
+    const row = await points
+      .createQueryBuilder("p")
+      .select(
+        "COALESCE(SUM(CASE WHEN p.action = :credit THEN p.point ELSE -p.point END), 0)",
+        "balance",
+      )
+      .where("p.user_id = :userId", { userId })
+      .andWhere("p.meta_type = :metaType", {
+        metaType: PointMetaType.CHALLENGE,
+      })
+      .andWhere("p.meta_id = :challengeId", { challengeId })
+      .andWhere("p.period_type = :type", { type })
+      .andWhere("p.period_key = :key", { key })
+      .setParameter("credit", PointAction.CREDIT)
+      .getRawOne<{ balance: string }>();
+
+    return Number(row?.balance ?? 0);
   }
   async debitReward(
     userId: number,
