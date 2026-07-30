@@ -5,6 +5,8 @@ import {
   IsOptional,
   IsString,
   MaxLength,
+  Max,
+  Min,
   MinLength,
 } from "class-validator";
 import { RewardType } from "../../entities/reward.entity";
@@ -30,6 +32,8 @@ export class CreateRewardDto {
 
   @IsOptional()
   @IsInt()
+  @Min(0)
+  @Max(100)
   discountRate?: number;
 
   @IsOptional()
