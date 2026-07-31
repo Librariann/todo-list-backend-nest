@@ -2,6 +2,8 @@ import {
   IsBoolean,
   IsEnum,
   IsInt,
+  Max,
+  Min,
   IsOptional,
   IsString,
 } from "class-validator";
@@ -30,5 +32,7 @@ export class UpdateRewardDto {
 
   @IsOptional()
   @IsInt()
+  @Min(0)
+  @Max(100)
   discountRate?: number;
 }
