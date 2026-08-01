@@ -66,6 +66,13 @@ function userRewardResponse(reward: UserReward): UserRewardOutput {
     isUsed: reward.isUsed,
   };
 }
+
+export function rewardPurchasePoint(reward: Pick<Reward, "point" | "discount" | "discountRate">): number {
+  if (!reward.discount) return reward.point;
+  const discountRate = Math.min(100, Math.max(0, reward.discountRate));
+  return Math.floor((reward.point * (100 - discountRate)) / 100);
+}
+
 @Injectable()
 export class RewardsService {
   constructor(
@@ -131,7 +138,9 @@ export class RewardsService {
       throw new NotFoundException(`보상을 찾을 수 없습니다: ${rewardId}`);
     }
 
-    if ((await this.points.total(userId)) < reward.point) {
+    const purchasePoint = rewardPurchasePoint(reward);
+
+    if ((await this.points.total(userId)) < purchasePoint) {
       throw new BadRequestException("보상을 구매할 포인트가 부족합니다.");
     }
 
@@ -141,14 +150,14 @@ export class RewardsService {
         rewardId,
         rewardName: reward.name,
         rewardType: reward.type,
-        rewardPoint: reward.point,
+        rewardPoint: purchasePoint,
         rewardDescription: reward.description,
         discount: reward.discount,
         discountRate: reward.discountRate,
         isUsed: false,
       }),
     );
-    await this.points.debitReward(userId, reward.point, rewardId);
+    await this.points.debitReward(userId, purchasePoint, rewardId);
 
     return userRewardResponse(item);
   }
