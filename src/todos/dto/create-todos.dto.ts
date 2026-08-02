@@ -1,4 +1,10 @@
-import { IsDateString, IsString, MaxLength, MinLength } from "class-validator";
+import {
+  IsDateString,
+  IsString,
+  Matches,
+  MaxLength,
+  MinLength,
+} from "class-validator";
 
 export class CreateTodoDto {
   @IsString()
@@ -7,5 +13,8 @@ export class CreateTodoDto {
   name: string;
 
   @IsDateString()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, {
+    message: "할 일 날짜는 YYYY-MM-DD 형식이어야 합니다.",
+  })
   targetDate: string;
 }
