@@ -5,14 +5,13 @@ import {
   BadRequestException,
 } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
-import { Repository } from "typeorm";
+import { DataSource, Repository } from "typeorm";
 import { ChallengesService } from "../challenges/challenges.service";
-import { WorkType } from "../entities/challenge.entity";
+import { today } from "../common/date";
 import { Todo, TodoStatus } from "../entities/todo.entity";
 import type { CreateTodoDto } from "./dto/create-todos.dto";
 import type { ReorderTodoDto } from "./dto/reorder-todos.dto";
 import type { UpdateTodoDto } from "./dto/update-todos.dto";
-import { today } from "src/common/date";
 
 export interface TodoOutput {
   id: number;
@@ -43,6 +42,7 @@ export class TodosService {
   constructor(
     @InjectRepository(Todo) private readonly todos: Repository<Todo>,
     private readonly challenges: ChallengesService,
+    private readonly dataSource: DataSource,
   ) {}
 
   async list(userId: number, targetDate: string): Promise<TodoOutput[]> {
@@ -56,7 +56,15 @@ export class TodosService {
 
   async create(userId: number, dto: CreateTodoDto): Promise<TodoOutput> {
     const { name, targetDate } = dto;
-    const exists = await this.todos.exists({ where: { name } });
+    if (targetDate < today()) {
+      throw new BadRequestException(
+        "지난 날짜에는 할 일을 생성할 수 없습니다.",
+      );
+    }
+
+    const exists = await this.todos.exists({
+      where: { userId, name, targetDate },
+    });
     if (exists) {
       throw new ConflictException(`이미 사용중인 할 일 입니다: ${name}`);
     }
@@ -100,22 +108,36 @@ export class TodosService {
 
   //TODO: 추후 고민필요.. 완료된 할 일 상태 변경이 안된다..?
   async status(userId: number, id: number, status: TodoStatus): Promise<void> {
-    const todo = await this.owned(userId, id);
-    if (todo.targetDate < today()) {
-      throw new BadRequestException(
-        "마감된 할 일은 상태를 변경할 수 없습니다.",
-      );
-    }
+    await this.dataSource.transaction(async (manager) => {
+      const todos = manager.getRepository(Todo);
+      const todo = await todos.findOne({
+        where: { id, userId },
+        lock: { mode: "pessimistic_write" },
+      });
+      if (!todo) {
+        throw new NotFoundException(`할 일을 찾을 수 없습니다: ${id}`);
+      }
+      if (todo.targetDate < today()) {
+        throw new BadRequestException(
+          "마감된 할 일은 상태를 변경할 수 없습니다.",
+        );
+      }
+      if (todo.targetDate > today() && status === TodoStatus.DONE) {
+        throw new BadRequestException(
+          "예정된 할 일은 해당 날짜에 완료할 수 있습니다.",
+        );
+      }
+      if (todo.status === status) return;
 
-    const newlyDone =
-      todo.status !== TodoStatus.DONE && status === TodoStatus.DONE;
+      const completionChanged =
+        (todo.status === TodoStatus.DONE) !== (status === TodoStatus.DONE);
+      todo.status = status;
+      await todos.save(todo);
 
-    todo.status = status;
-    await this.todos.save(todo);
-
-    if (newlyDone) {
-      await this.challenges.record(userId, WorkType.TODOS);
-    }
+      if (completionChanged) {
+        await this.challenges.syncTodoProgress(userId, manager);
+      }
+    });
   }
 
   async reorder(userId: number, dto: ReorderTodoDto): Promise<void> {
