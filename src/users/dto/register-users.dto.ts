@@ -9,12 +9,13 @@ import {
   MinLength,
 } from "class-validator";
 import { UserRole } from "../../entities/user.entity";
+import { NicknameMaxLength } from "./nickname-length.validator";
 
 export class RegisterDto {
   @IsString()
   @MinLength(3)
-  @MaxLength(50)
-  @Matches(/^[a-zA-Z0-9_]+$/)
+  @NicknameMaxLength()
+  @Matches(/^[가-힣a-zA-Z0-9_]+$/)
   nickname: string;
 
   @IsString()
