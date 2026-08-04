@@ -35,9 +35,9 @@ export class User extends BaseEntity {
   @Column({ name: "provider_id", type: "varchar", nullable: true, length: 255 })
   providerId: string | null;
 
-  @Column({ type: "varchar", default: UserStatus.ACTIVE })
+  @Column({ type: "enum", enum: UserStatus, default: UserStatus.ACTIVE })
   status: UserStatus;
 
-  @Column({ type: "varchar", default: UserRole.USER })
+  @Column({ type: "enum", enum: UserRole, default: UserRole.USER })
   role: UserRole;
 }
