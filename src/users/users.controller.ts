@@ -4,14 +4,22 @@ import {
   Get,
   Param,
   ParseIntPipe,
+  Patch,
   Post,
 } from "@nestjs/common";
 import { CurrentUser } from "../auth/current-user.decorator";
 import { Public } from "../auth/public.decorator";
+import { Roles } from "../auth/roles.decorator";
 import { ApiResponse, success } from "../common/api-response";
-import { User } from "../entities/user.entity";
+import { User, UserRole } from "../entities/user.entity";
 import { RegisterDto } from "./dto/register-users.dto";
-import { UserOutput, userResponse, UsersService } from "./users.service";
+import { UpdateUserDto } from "./dto/update-users.dto";
+import {
+  AdminUserAssetOutput,
+  UserOutput,
+  userResponse,
+  UsersService,
+} from "./users.service";
 
 @Controller("api/users")
 export class UsersController {
@@ -59,10 +67,26 @@ export class UsersController {
     return success(userResponse(user), "내 정보 조회");
   }
 
+  @Patch("me")
+  async updateMe(
+    @Body() dto: UpdateUserDto,
+    @CurrentUser() user: User,
+  ): Promise<ApiResponse<UserOutput>> {
+    const result = await this.service.updateMe(user.id, dto);
+    return success(result, "내 정보가 수정되었습니다.");
+  }
+
   @Get("active")
   async active(): Promise<ApiResponse<UserOutput[]>> {
     const result = await this.service.active();
     return success(result, "활성 사용자 목록 조회가 완료되었습니다.");
+  }
+
+  @Get("admin/assets")
+  @Roles(UserRole.ADMIN)
+  async adminAssets(): Promise<ApiResponse<AdminUserAssetOutput[]>> {
+    const result = await this.service.adminAssets();
+    return success(result, "사용자 자산 현황 조회가 완료되었습니다.");
   }
 
   @Get("username/:username")
