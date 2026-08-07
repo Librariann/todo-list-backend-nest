@@ -7,8 +7,11 @@ import {
 import { InjectRepository } from "@nestjs/typeorm";
 import * as bcrypt from "bcrypt";
 import { Repository } from "typeorm";
+import { PointAction, UserPoint } from "../entities/user-point.entity";
+import { RewardType, UserReward } from "../entities/reward.entity";
 import { User, UserRole, UserStatus } from "../entities/user.entity";
 import type { RegisterDto } from "./dto/register-users.dto";
+import type { UpdateUserDto } from "./dto/update-users.dto";
 
 export interface UserOutput {
   id: number;
@@ -20,6 +23,21 @@ export interface UserOutput {
   role: UserRole;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface AdminUserCouponOutput {
+  id: number;
+  name: string;
+  description: string;
+  point: number;
+  isUsed: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface AdminUserAssetOutput extends UserOutput {
+  pointBalance: number;
+  coupons: AdminUserCouponOutput[];
 }
 
 export function userResponse(user: User): UserOutput {
@@ -40,6 +58,10 @@ export function userResponse(user: User): UserOutput {
 export class UsersService {
   constructor(
     @InjectRepository(User) private readonly users: Repository<User>,
+    @InjectRepository(UserPoint)
+    private readonly points: Repository<UserPoint>,
+    @InjectRepository(UserReward)
+    private readonly userRewards: Repository<UserReward>,
   ) {}
   async register(dto: RegisterDto): Promise<UserOutput> {
     if (dto.password !== dto.confirmPassword) {
@@ -85,10 +107,76 @@ export class UsersService {
     if (!user) throw new NotFoundException("사용자를 찾을 수 없습니다.");
     return userResponse(user);
   }
+
+  async updateMe(userId: number, dto: UpdateUserDto): Promise<UserOutput> {
+    const user = await this.users.findOneBy({ id: userId });
+    if (!user) throw new NotFoundException("사용자를 찾을 수 없습니다.");
+
+    const nickname = dto.nickname?.trim();
+    if (nickname && nickname !== user.nickname) {
+      const nicknameExists = await this.users.exists({ where: { nickname } });
+      if (nicknameExists) {
+        throw new ConflictException(`이미 사용 중인 닉네임입니다: ${nickname}`);
+      }
+      user.nickname = nickname;
+    }
+
+    if (dto.name !== undefined) user.name = dto.name.trim() || null;
+    if (dto.phoneNumber !== undefined) {
+      user.phoneNumber = dto.phoneNumber.trim() || null;
+    }
+
+    return userResponse(await this.users.save(user));
+  }
   async active(): Promise<UserOutput[]> {
     return (await this.users.findBy({ status: UserStatus.ACTIVE })).map(
       userResponse,
     );
+  }
+
+  async adminAssets(): Promise<AdminUserAssetOutput[]> {
+    const [users, pointRows, coupons] = await Promise.all([
+      this.users.find({ order: { createdAt: "DESC" } }),
+      this.points
+        .createQueryBuilder("point")
+        .select("point.userId", "userId")
+        .addSelect(
+          "COALESCE(SUM(CASE WHEN point.action = :credit THEN point.point ELSE -point.point END), 0)",
+          "balance",
+        )
+        .setParameter("credit", PointAction.CREDIT)
+        .groupBy("point.userId")
+        .getRawMany<{ userId: string; balance: string }>(),
+      this.userRewards.find({
+        where: { rewardType: RewardType.COUPON },
+        order: { createdAt: "DESC" },
+      }),
+    ]);
+
+    const pointBalanceByUser = new Map(
+      pointRows.map(({ userId, balance }) => [Number(userId), Number(balance)]),
+    );
+    const couponsByUser = new Map<number, AdminUserCouponOutput[]>();
+    coupons.forEach((coupon) => {
+      const userId = Number(coupon.userId);
+      const owned = couponsByUser.get(userId) ?? [];
+      owned.push({
+        id: Number(coupon.id),
+        name: coupon.rewardName,
+        description: coupon.rewardDescription,
+        point: coupon.rewardPoint,
+        isUsed: coupon.isUsed,
+        createdAt: coupon.createdAt,
+        updatedAt: coupon.updatedAt,
+      });
+      couponsByUser.set(userId, owned);
+    });
+
+    return users.map((user) => ({
+      ...userResponse(user),
+      pointBalance: pointBalanceByUser.get(Number(user.id)) ?? 0,
+      coupons: couponsByUser.get(Number(user.id)) ?? [],
+    }));
   }
 
   //닉네임 중복 확인
