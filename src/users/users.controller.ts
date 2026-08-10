@@ -6,39 +6,17 @@ import {
   ParseIntPipe,
   Post,
 } from "@nestjs/common";
-import {
-  IsEmail,
-  IsEnum,
-  IsNotEmpty,
-  IsOptional,
-  IsString,
-  Matches,
-  MaxLength,
-  MinLength,
-} from "class-validator";
 import { CurrentUser } from "../auth/current-user.decorator";
 import { Public } from "../auth/public.decorator";
 import { success } from "../common/api-response";
-import { User, UserRole } from "../entities/user.entity";
+import { User } from "../entities/user.entity";
+import { RegisterDto } from "./dto/register-users.dto";
 import { userResponse, UsersService } from "./users.service";
-
-class RegisterDto {
-  @IsString()
-  @MinLength(3)
-  @MaxLength(50)
-  @Matches(/^[a-zA-Z0-9_]+$/)
-  nickname: string;
-  @IsString() @MinLength(2) @MaxLength(50) name: string;
-  @IsEmail() email: string;
-  @MinLength(8) password: string;
-  @IsNotEmpty() confirmPassword: string;
-  @IsOptional() @IsString() phoneNumber?: string;
-  @IsOptional() @IsEnum(UserRole) role?: UserRole;
-}
 
 @Controller("api/users")
 export class UsersController {
   constructor(private readonly service: UsersService) {}
+
   @Public()
   @Post("register")
   async register(@Body() dto: RegisterDto) {
@@ -47,6 +25,7 @@ export class UsersController {
       "회원가입이 성공적으로 완료되었습니다.",
     );
   }
+
   @Public()
   @Get("check-username/:username")
   async nickname(@Param("username") value: string) {
@@ -68,6 +47,7 @@ export class UsersController {
       available ? "사용 가능한 이메일입니다." : "이미 사용 중인 이메일입니다.",
     );
   }
+
   @Public()
   @Get("health")
   health() {
