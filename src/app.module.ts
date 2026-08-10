@@ -17,19 +17,22 @@ import { UsersModule } from "./users/users.module";
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true }),
+    ConfigModule.forRoot({
+      isGlobal: true,
+      envFilePath: process.env.NODE_ENV
+        ? [`.env.${process.env.NODE_ENV}`, ".env"]
+        : [".env"],
+    }),
     ScheduleModule.forRoot(),
     TypeOrmModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
         type: "postgres",
-        url:
-          config.get("DATABASE_URL") ??
-          "postgresql://postgres:postgres@localhost:5432/postgres",
-        schema: config.get("DB_SCHEMA") ?? "todo_list",
+        url: config.get<string>("DATABASE_URL"),
+        schema: config.get<string>("DB_SCHEMA", "todo_list"),
         autoLoadEntities: true,
-        synchronize: config.get("DB_SYNC") === "true",
-        logging: config.get("DB_LOGGING") === "true",
+        synchronize: config.get<string>("DB_SYNC") === "true",
+        logging: config.get<string>("DB_LOGGING") === "true",
       }),
     }),
     AuthModule,

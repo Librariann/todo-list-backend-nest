@@ -24,24 +24,24 @@ export class OAuthService {
   private provider(name: string): ProviderConfig {
     const configs: Record<string, ProviderConfig> = {
       google: {
-        clientId: this.config.get("GOOGLE_CLIENT_ID") ?? "",
-        clientSecret: this.config.get("GOOGLE_CLIENT_SECRET") ?? "",
+        clientId: this.config.get<string>("GOOGLE_CLIENT_ID", ""),
+        clientSecret: this.config.get<string>("GOOGLE_CLIENT_SECRET", ""),
         authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",
         tokenUrl: "https://oauth2.googleapis.com/token",
         userUrl: "https://openidconnect.googleapis.com/v1/userinfo",
         scope: "openid email profile",
       },
       kakao: {
-        clientId: this.config.get("KAKAO_CLIENT_ID") ?? "",
-        clientSecret: this.config.get("KAKAO_CLIENT_SECRET") ?? "",
+        clientId: this.config.get<string>("KAKAO_CLIENT_ID", ""),
+        clientSecret: this.config.get<string>("KAKAO_CLIENT_SECRET", ""),
         authorizeUrl: "https://kauth.kakao.com/oauth/authorize",
         tokenUrl: "https://kauth.kakao.com/oauth/token",
         userUrl: "https://kapi.kakao.com/v2/user/me",
         scope: "profile_nickname account_email",
       },
       naver: {
-        clientId: this.config.get("NAVER_CLIENT_ID") ?? "",
-        clientSecret: this.config.get("NAVER_CLIENT_SECRET") ?? "",
+        clientId: this.config.get<string>("NAVER_CLIENT_ID", ""),
+        clientSecret: this.config.get<string>("NAVER_CLIENT_SECRET", ""),
         authorizeUrl: "https://nid.naver.com/oauth2.0/authorize",
         tokenUrl: "https://nid.naver.com/oauth2.0/token",
         userUrl: "https://openapi.naver.com/v1/nid/me",

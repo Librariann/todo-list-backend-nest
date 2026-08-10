@@ -21,20 +21,31 @@ export enum PointMetaType {
 }
 @Entity({ name: "user_points", schema: "todo_list" })
 export class UserPoint extends BaseEntity {
-  @Column({ type: "varchar", default: PointAction.CREDIT }) action: PointAction;
+  @Column({ type: "varchar", default: PointAction.CREDIT })
+  action: PointAction;
+
   @Column({ type: "varchar", default: PointReason.CHALLENGE })
   reason: PointReason;
+
   @ManyToOne(() => User, { nullable: false })
   @JoinColumn({ name: "user_id" })
   user: User;
-  @Column({ name: "user_id", type: "bigint" }) userId: number;
+
+  @Column({ name: "user_id", type: "bigint" })
+  userId: number;
+
   @Column({ name: "meta_type", type: "varchar", nullable: true })
   metaType: PointMetaType | null;
-  @Column({ name: "meta_id", type: "bigint", nullable: true }) metaId:
-    number | null;
+
+  @Column({ name: "meta_id", type: "bigint", nullable: true })
+  metaId: number | null;
+
   @Column({ name: "period_type", type: "varchar", nullable: true })
   periodType: PeriodType | null;
-  @Column({ name: "period_key", type: "varchar", nullable: true }) periodKey:
-    string | null;
-  @Column() point: number;
+
+  @Column({ name: "period_key", type: "varchar", nullable: true })
+  periodKey: string | null;
+
+  @Column()
+  point: number;
 }
