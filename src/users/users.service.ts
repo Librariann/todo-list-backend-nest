@@ -8,6 +8,7 @@ import { InjectRepository } from "@nestjs/typeorm";
 import * as bcrypt from "bcrypt";
 import { Repository } from "typeorm";
 import { User, UserRole, UserStatus } from "../entities/user.entity";
+import type { RegisterDto } from "./dto/register-users.dto";
 
 export function userResponse(user: User) {
   return {
@@ -28,25 +29,22 @@ export class UsersService {
   constructor(
     @InjectRepository(User) private readonly users: Repository<User>,
   ) {}
-  async register(dto: {
-    nickname: string;
-    name: string;
-    email: string;
-    password: string;
-    confirmPassword: string;
-    phoneNumber?: string;
-    role?: UserRole;
-  }) {
-    if (dto.password !== dto.confirmPassword)
+  async register(dto: RegisterDto) {
+    if (dto.password !== dto.confirmPassword) {
       throw new BadRequestException(
         "비밀번호와 비밀번호 확인이 일치하지 않습니다.",
       );
-    if (await this.users.exists({ where: { nickname: dto.nickname } }))
+    }
+
+    if (await this.users.exists({ where: { nickname: dto.nickname } })) {
       throw new ConflictException(
         `이미 사용 중인 사용자명입니다: ${dto.nickname}`,
       );
-    if (await this.users.exists({ where: { email: dto.email } }))
+    }
+    if (await this.users.exists({ where: { email: dto.email } })) {
       throw new ConflictException(`이미 사용 중인 이메일입니다: ${dto.email}`);
+    }
+
     const user = this.users.create({
       nickname: dto.nickname,
       name: dto.name,
@@ -58,11 +56,16 @@ export class UsersService {
       status: UserStatus.ACTIVE,
       role: dto.role ?? UserRole.USER,
     });
+
     return userResponse(await this.users.save(user));
   }
   async byId(id: number) {
     const user = await this.users.findOneBy({ id });
-    if (!user) throw new NotFoundException("사용자를 찾을 수 없습니다.");
+
+    if (!user) {
+      throw new NotFoundException("사용자를 찾을 수 없습니다.");
+    }
+
     return userResponse(user);
   }
   async byNickname(nickname: string) {
@@ -75,9 +78,13 @@ export class UsersService {
       userResponse,
     );
   }
+
+  //닉네임 중복 확인
   nicknameAvailable(nickname: string) {
     return this.users.exists({ where: { nickname } }).then((exists) => !exists);
   }
+
+  //이메일 중복 확인
   emailAvailable(email: string) {
     return this.users.exists({ where: { email } }).then((exists) => !exists);
   }
