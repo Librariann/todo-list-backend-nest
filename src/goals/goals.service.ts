@@ -11,57 +11,103 @@ import { ChallengesService } from "../challenges/challenges.service";
 import { addPeriod, PeriodType, today } from "../common/date";
 import { WorkType } from "../entities/challenge.entity";
 import { Goal, GoalProcess, GoalStreak } from "../entities/goal.entity";
+import type { CreateGoalDto } from "./dto/create-goals.dto";
 
-function goalResponse(g: Goal) {
+export interface GoalOutput {
+  id: number;
+  createdAt: Date;
+  updatedAt: Date;
+  name: string;
+  description: string | null;
+  recurrenceType: PeriodType;
+  interval: number;
+  startDate: string;
+  targetCount: number;
+}
+
+export interface GoalProcessOutput {
+  id: number;
+  createdAt: Date;
+  updatedAt: Date;
+  goalId: number;
+  goalName: string;
+  periodIndex: number;
+  periodStart: string;
+  periodEnd: string;
+  currentCount: number;
+  targetCount: number;
+  isAchieved: boolean;
+  isFinalized: boolean;
+  progressPercentage: number;
+  daysRemaining: number;
+}
+
+export interface GoalStreakOutput {
+  id: number;
+  createdAt: Date;
+  updatedAt: Date;
+  goalId: number;
+  goalName: string;
+  currentStreak: number;
+  longestStreak: number;
+  isActive: boolean;
+}
+
+function goalResponse(goal: Goal): GoalOutput {
   return {
-    id: g.id,
-    createdAt: g.createdAt,
-    updatedAt: g.updatedAt,
-    name: g.name,
-    description: g.description,
-    recurrenceType: g.recurrenceType,
-    interval: g.interval,
-    startDate: g.startDate,
-    targetCount: g.targetCount,
+    id: goal.id,
+    createdAt: goal.createdAt,
+    updatedAt: goal.updatedAt,
+    name: goal.name,
+    description: goal.description,
+    recurrenceType: goal.recurrenceType,
+    interval: goal.interval,
+    startDate: goal.startDate,
+    targetCount: goal.targetCount,
   };
 }
-function processResponse(p: GoalProcess | null) {
-  if (!p) return null;
-  const target = p.goal.targetCount;
+
+function processResponse(
+  process: GoalProcess | null,
+): GoalProcessOutput | null {
+  if (!process) return null;
+  const target = process.goal.targetCount;
   const now = new Date(`${today()}T00:00:00Z`);
-  const end = new Date(`${p.periodEnd}T00:00:00Z`);
+  const end = new Date(`${process.periodEnd}T00:00:00Z`);
+
   return {
-    id: p.id,
-    createdAt: p.createdAt,
-    updatedAt: p.updatedAt,
-    goalId: p.goalId,
-    goalName: p.goal.name,
-    periodIndex: p.periodIndex,
-    periodStart: p.periodStart,
-    periodEnd: p.periodEnd,
-    currentCount: p.currentCount,
+    id: process.id,
+    createdAt: process.createdAt,
+    updatedAt: process.updatedAt,
+    goalId: process.goalId,
+    goalName: process.goal.name,
+    periodIndex: process.periodIndex,
+    periodStart: process.periodStart,
+    periodEnd: process.periodEnd,
+    currentCount: process.currentCount,
     targetCount: target,
-    isAchieved: p.isAchieved,
-    isFinalized: p.isFinalized,
+    isAchieved: process.isAchieved,
+    isFinalized: process.isFinalized,
     progressPercentage:
-      target > 0 ? Math.min(100, (p.currentCount / target) * 100) : 0,
+      target > 0 ? Math.min(100, (process.currentCount / target) * 100) : 0,
     daysRemaining: Math.max(
       0,
       Math.floor((end.getTime() - now.getTime()) / 86400000),
     ),
   };
 }
-function streakResponse(s: GoalStreak | null) {
-  return s
+
+function streakResponse(streak: GoalStreak | null): GoalStreakOutput | null {
+  return streak
     ? {
-        id: s.id,
-        createdAt: s.createdAt,
-        updatedAt: s.updatedAt,
-        goalId: s.goalId,
-        goalName: s.goal.name,
-        currentStreak: s.currentStreak,
-        longestStreak: s.longestStreak,
-        isActive: s.currentStreak > 0,
+        id: streak.id,
+        createdAt: streak.createdAt,
+        updatedAt: streak.updatedAt,
+        goalId: streak.goalId,
+        goalName: streak.goal.name,
+        currentStreak: streak.currentStreak,
+        longestStreak: streak.longestStreak,
+        isActive: streak.currentStreak > 0,
       }
     : null;
 }
@@ -70,31 +116,27 @@ function streakResponse(s: GoalStreak | null) {
 export class GoalsService {
   constructor(
     @InjectRepository(Goal) private readonly goals: Repository<Goal>,
+
     @InjectRepository(GoalProcess)
     private readonly processes: Repository<GoalProcess>,
+
     @InjectRepository(GoalStreak)
     private readonly streaks: Repository<GoalStreak>,
     private readonly challenges: ChallengesService,
   ) {}
-  async create(
-    userId: number,
-    dto: {
-      name: string;
-      description?: string;
-      recurrenceType: PeriodType;
-      interval: number;
-      startDate: string;
-      targetCount: number;
-    },
-  ) {
-    if (
-      await this.goals.exists({
-        where: { userId, name: dto.name, isActive: true },
-      })
-    )
+
+  //Create Goals
+  async create(userId: number, dto: CreateGoalDto): Promise<GoalOutput> {
+    const exists = await this.goals.exists({
+      where: { userId, name: dto.name, isActive: true },
+    });
+
+    if (exists) {
       throw new ConflictException(
         `이미 동일한 이름의 활성 목표가 존재합니다: ${dto.name}`,
       );
+    }
+
     const goal = await this.goals.save(
       this.goals.create({
         ...dto,
@@ -103,6 +145,7 @@ export class GoalsService {
         isActive: true,
       }),
     );
+
     await this.processes.save(
       this.processes.create({
         goalId: goal.id,
@@ -119,6 +162,7 @@ export class GoalsService {
         isFinalized: false,
       }),
     );
+
     await this.streaks.save(
       this.streaks.create({
         goalId: goal.id,
@@ -127,34 +171,43 @@ export class GoalsService {
         longestStreak: 0,
       }),
     );
+
     return goalResponse(goal);
   }
-  async list(userId: number) {
-    return (
-      await this.goals.find({
-        where: { userId, isActive: true },
-        order: { createdAt: "DESC" },
-      })
-    ).map(goalResponse);
+
+  //Get Goals List
+  async list(userId: number): Promise<GoalOutput[]> {
+    const getFindLists = await this.goals.find({
+      where: { userId, isActive: true },
+      order: { createdAt: "DESC" },
+    });
+    const result = getFindLists.map(goalResponse);
+
+    return result;
   }
-  async get(userId: number, id: number) {
-    return goalResponse(await this.owned(userId, id));
+
+  async get(userId: number, id: number): Promise<GoalOutput> {
+    const goal = await this.owned(userId, id);
+    return goalResponse(goal);
   }
+
   async update(
     userId: number,
     id: number,
-    dto: { name: string; description?: string; targetCount: number },
-  ) {
+    dto: CreateGoalDto,
+  ): Promise<GoalOutput> {
     const goal = await this.owned(userId, id);
-    if (
-      dto.name !== goal.name &&
-      (await this.goals.exists({
-        where: { userId, name: dto.name, isActive: true },
-      }))
-    )
+    const exists = await this.goals.exists({
+      where: { userId, name: dto.name, isActive: true },
+    });
+
+    //받은 데이터의 이름이 기존 목표 이름과 다르고, 동일한 이름의 활성화된 목표가 존재하면 충돌 예외 발생
+    if (dto.name !== goal.name && exists) {
       throw new ConflictException(
         `이미 동일한 이름의 활성 목표가 존재합니다: ${dto.name}`,
       );
+    }
+
     goal.name = dto.name;
     goal.description = dto.description ?? null;
     goal.targetCount = dto.targetCount;
@@ -164,52 +217,77 @@ export class GoalsService {
     const goal = await this.owned(userId, id);
     goal.isActive = false;
     await this.goals.save(goal);
-    const p = await this.current(userId, id);
-    if (p) {
-      p.isFinalized = true;
-      await this.processes.save(p);
-      await this.updateStreak(userId, id, p.isAchieved);
+    const currentGoals = await this.current(userId, id);
+    if (currentGoals) {
+      currentGoals.isFinalized = true;
+      await this.processes.save(currentGoals);
+      await this.updateStreak(userId, id, currentGoals.isAchieved);
     }
   }
   async achieve(userId: number, id: number) {
     const goal = await this.owned(userId, id);
-    const p = await this.current(userId, id);
-    if (!p)
+    const currentGoals = await this.current(userId, id);
+
+    if (!currentGoals) {
       throw new NotFoundException("활성 목표 프로세스를 찾을 수 없습니다");
-    if (p.isAchieved) throw new BadRequestException("이미 달성된 목표입니다");
-    p.currentCount += 1;
-    if (p.currentCount >= goal.targetCount) {
-      p.isAchieved = true;
+    }
+
+    if (currentGoals.isAchieved) {
+      throw new BadRequestException("이미 달성된 목표입니다");
+    }
+
+    currentGoals.currentCount += 1;
+
+    if (currentGoals.currentCount >= goal.targetCount) {
+      currentGoals.isAchieved = true;
       await this.challenges.record(userId, WorkType.GOALS);
     }
-    await this.processes.save(p);
-    p.goal = goal;
-    return { data: processResponse(p), achieved: p.isAchieved };
+
+    await this.processes.save(currentGoals);
+    currentGoals.goal = goal;
+
+    return {
+      data: processResponse(currentGoals),
+      achieved: currentGoals.isAchieved,
+    };
   }
   async progress(userId: number, id: number) {
     const goal = await this.owned(userId, id);
-    const p = await this.current(userId, id);
-    if (p) p.goal = goal;
-    return processResponse(p);
+    const currentGoals = await this.current(userId, id);
+
+    if (currentGoals) {
+      currentGoals.goal = goal;
+    }
+
+    return processResponse(currentGoals);
   }
+
   async streak(userId: number, id: number) {
     const goal = await this.owned(userId, id);
-    const s = await this.streaks.findOneBy({ userId, goalId: id });
-    if (s) s.goal = goal;
-    return streakResponse(s);
+    const streak = await this.streaks.findOneBy({ userId, goalId: id });
+
+    if (streak) {
+      streak.goal = goal;
+    }
+
+    return streakResponse(streak);
   }
+
   async dashboard(userId: number) {
     const processes = await this.processes.find({
       where: { userId, isFinalized: false },
       relations: { goal: true },
       order: { periodStart: "DESC" },
     });
+
     const streaks = await this.streaks.find({
       where: { userId },
       relations: { goal: true },
     });
+
     const activeGoals = processes.map(processResponse);
     const activeStreaks = streaks.map(streakResponse);
+
     return {
       activeGoals,
       activeStreaks,
@@ -226,53 +304,72 @@ export class GoalsService {
       },
     };
   }
+
   private current(userId: number, goalId: number) {
     return this.processes.findOne({
       where: { userId, goalId, isFinalized: false },
       relations: { goal: true },
     });
   }
+
   private async owned(userId: number, id: number) {
     const goal = await this.goals.findOneBy({ id, userId });
-    if (!goal) throw new NotFoundException(`목표를 찾을 수 없습니다: ${id}`);
+    if (!goal) {
+      throw new NotFoundException(`목표를 찾을 수 없습니다: ${id}`);
+    }
+
     return goal;
   }
+
   private async updateStreak(
     userId: number,
     goalId: number,
     achieved: boolean,
   ) {
-    const s = await this.streaks.findOneBy({ userId, goalId });
-    if (!s) return;
-    s.currentStreak = achieved ? s.currentStreak + 1 : 0;
-    s.longestStreak = Math.max(s.longestStreak, s.currentStreak);
-    await this.streaks.save(s);
+    const streak = await this.streaks.findOneBy({ userId, goalId });
+
+    //streak이 존재하지 않으면 아무 작업도 수행하지 않고 종료
+    if (!streak) {
+      return;
+    }
+
+    streak.currentStreak = achieved ? streak.currentStreak + 1 : 0;
+    streak.longestStreak = Math.max(streak.longestStreak, streak.currentStreak);
+    await this.streaks.save(streak);
   }
+
   @Cron("0 0 1 * * *", { timeZone: "Asia/Seoul" }) async resetExpired() {
-    for (const p of await this.processes.find({
+    for (const process of await this.processes.find({
       where: { isFinalized: false, periodEnd: LessThan(today()) },
       relations: { goal: true },
     })) {
-      p.isFinalized = true;
-      await this.processes.save(p);
-      await this.updateStreak(p.userId, p.goalId, p.isAchieved);
-      if (p.goal.isActive)
+      process.isFinalized = true;
+
+      await this.processes.save(process);
+      await this.updateStreak(
+        process.userId,
+        process.goalId,
+        process.isAchieved,
+      );
+
+      if (process.goal.isActive) {
         await this.processes.save(
           this.processes.create({
-            goalId: p.goalId,
-            userId: p.userId,
-            periodIndex: p.periodIndex + 1,
+            goalId: process.goalId,
+            userId: process.userId,
+            periodIndex: process.periodIndex + 1,
             periodStart: today(),
             periodEnd: addPeriod(
               today(),
-              p.goal.recurrenceType,
-              p.goal.interval,
+              process.goal.recurrenceType,
+              process.goal.interval,
             ),
             currentCount: 0,
             isAchieved: false,
             isFinalized: false,
           }),
         );
+      }
     }
   }
 }
