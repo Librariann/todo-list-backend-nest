@@ -65,8 +65,12 @@ export class PointsService {
     );
   }
   async adjust(targetId: number, point: number): Promise<number> {
-    if (!(await this.users.exists({ where: { id: targetId } })))
+    const userExists = await this.users.exists({ where: { id: targetId } });
+
+    if (!userExists) {
       throw new NotFoundException("해당 사용자를 찾을 수 없습니다.");
+    }
+
     await this.points.save(
       this.points.create({
         userId: targetId,
