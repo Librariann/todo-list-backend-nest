@@ -12,6 +12,7 @@ import { Todo, TodoStatus } from "../entities/todo.entity";
 import type { CreateTodoDto } from "./dto/create-todos.dto";
 import type { ReorderTodoDto } from "./dto/reorder-todos.dto";
 import type { UpdateTodoDto } from "./dto/update-todos.dto";
+import { today } from "src/common/date";
 
 export interface TodoOutput {
   id: number;
@@ -97,16 +98,12 @@ export class TodosService {
     return todoResponse(await this.todos.save(todo));
   }
 
-  async status(
-    userId: number,
-    id: number,
-    status: TodoStatus,
-  ): Promise<void> {
+  //TODO: 추후 고민필요.. 완료된 할 일 상태 변경이 안된다..?
+  async status(userId: number, id: number, status: TodoStatus): Promise<void> {
     const todo = await this.owned(userId, id);
-
-    if (todo.status === TodoStatus.DONE && status !== TodoStatus.DONE) {
+    if (todo.targetDate < today()) {
       throw new BadRequestException(
-        "이미 완료된 할 일은 상태를 변경할 수 없습니다.",
+        "마감된 할 일은 상태를 변경할 수 없습니다.",
       );
     }
 
@@ -121,10 +118,7 @@ export class TodosService {
     }
   }
 
-  async reorder(
-    userId: number,
-    dto: ReorderTodoDto,
-  ): Promise<void> {
+  async reorder(userId: number, dto: ReorderTodoDto): Promise<void> {
     const { targetDate, indexIds } = dto;
     const owned = await this.list(userId, targetDate);
     const ids = new Set(owned.map((t) => Number(t.id)));

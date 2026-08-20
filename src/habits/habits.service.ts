@@ -173,15 +173,29 @@ export class HabitsService {
 
     await this.logs.save(log);
 
+    let streak = await this.streaks.findOneBy({ habitId: id, userId });
+
     if (newlyAchieved) {
+      if (!streak) {
+        streak = this.streaks.create({
+          habitId: id,
+          userId,
+          currentStreak: 0,
+          longestStreak: 0,
+        });
+      }
+
+      streak.currentStreak += 1;
+      streak.longestStreak = Math.max(
+        streak.longestStreak,
+        streak.currentStreak,
+      );
+      streak = await this.streaks.save(streak);
+
       await this.challenges.record(userId, WorkType.HABITS);
     }
 
-    return response(
-      getHabits,
-      log,
-      await this.streaks.findOneBy({ habitId: id, userId }),
-    );
+    return response(getHabits, log, streak);
   }
 
   // 습관 카운터 감소
@@ -243,8 +257,7 @@ export class HabitsService {
     return habits;
   }
 
-  //매일 0시 10분에 Streaks update
-  //TODO: 추후 기능 변경 필요 - 매일 0시 10분이 아니라 달성시마다 체크해야함
+  // 매일 0시 10분에 전날 미달성 습관의 연속 기록을 초기화
   @Cron("0 10 0 * * *", { timeZone: "Asia/Seoul" })
   async updateDailyStreaks(): Promise<void> {
     const date = new Date(`${today()}T00:00:00Z`);
@@ -272,12 +285,9 @@ export class HabitsService {
         });
       }
 
-      streaks.currentStreak = log?.isAchieved ? streaks.currentStreak + 1 : 0;
-
-      streaks.longestStreak = Math.max(
-        streaks.longestStreak,
-        streaks.currentStreak,
-      );
+      if (!log?.isAchieved) {
+        streaks.currentStreak = 0;
+      }
 
       await this.streaks.save(streaks);
     }
