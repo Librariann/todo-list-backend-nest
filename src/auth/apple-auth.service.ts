@@ -70,6 +70,7 @@ export class AppleAuthService {
         payload.email,
         name,
         tokens.refresh_token,
+        clientId,
       );
     } catch (cause) {
       if (
@@ -108,6 +109,7 @@ export class AppleAuthService {
         payload.email,
         name,
         tokens.refresh_token,
+        clientId,
       );
     } catch (cause) {
       if (
@@ -166,6 +168,39 @@ export class AppleAuthService {
       throw new UnauthorizedException("Apple 인증 코드가 올바르지 않습니다.");
     }
     return result;
+  }
+
+  async revokeRefreshToken(
+    refreshToken: string,
+    storedClientId?: string | null,
+  ): Promise<void> {
+    const clientIds = [
+      storedClientId,
+      this.config.get<string>("APPLE_CLIENT_ID")?.trim(),
+      this.config.get<string>("APPLE_SERVICE_ID")?.trim(),
+    ].filter(
+      (value, index, values): value is string =>
+        Boolean(value) && values.indexOf(value) === index,
+    );
+
+    for (const clientId of clientIds) {
+      const clientSecret = await this.createClientSecret(clientId);
+      const response = await fetch(`${APPLE_ISSUER}/auth/revoke`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          client_id: clientId,
+          client_secret: clientSecret,
+          token: refreshToken,
+          token_type_hint: "refresh_token",
+        }),
+      });
+      if (response.ok) return;
+    }
+
+    throw new ServiceUnavailableException(
+      "Apple 로그인 연결을 해제하지 못했습니다. 잠시 후 다시 시도해 주세요.",
+    );
   }
 
   private webCallbackUrl(): string {
