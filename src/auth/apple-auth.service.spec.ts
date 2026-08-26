@@ -33,6 +33,7 @@ describe("AppleAuthService", () => {
   const upsertOAuth = jest.fn();
   const configValues: Record<string, string> = {
     APPLE_CLIENT_ID: "com.growdo.app",
+    APPLE_SERVICE_ID: "com.growdo.web",
     APPLE_TEAM_ID: "TEAM123",
     APPLE_KEY_ID: "KEY123",
     APPLE_PRIVATE_KEY: "private-key",
@@ -80,6 +81,7 @@ describe("AppleAuthService", () => {
       "user@privaterelay.appleid.com",
       "홍길동",
       "apple-refresh-token",
+      "com.growdo.app",
     );
   });
 
@@ -101,5 +103,21 @@ describe("AppleAuthService", () => {
       }),
     ).rejects.toThrow("Apple 로그인 정보가 올바르지 않습니다.");
     expect(upsertOAuth).not.toHaveBeenCalled();
+  });
+
+  it("revokes the stored Apple refresh token", async () => {
+    await expect(
+      service.revokeRefreshToken("apple-refresh-token", "com.growdo.app"),
+    ).resolves.toBeUndefined();
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      "https://appleid.apple.com/auth/revoke",
+      expect.objectContaining({ method: "POST" }),
+    );
+    const request = (global.fetch as jest.Mock).mock.calls[0][1] as {
+      body: URLSearchParams;
+    };
+    expect(request.body.get("client_id")).toBe("com.growdo.app");
+    expect(request.body.get("token")).toBe("apple-refresh-token");
   });
 });
