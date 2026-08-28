@@ -115,6 +115,7 @@ export class AuthService {
     email: string,
     name: string,
     providerRefreshToken?: string,
+    providerClientId?: string,
   ): Promise<User> {
     let user = await this.users.findOne({
       where: [{ provider, providerId }, { email }],
@@ -129,6 +130,7 @@ export class AuthService {
         providerId,
         appleRefreshToken:
           provider === "apple" ? providerRefreshToken : undefined,
+        appleClientId: provider === "apple" ? providerClientId : undefined,
         status: UserStatus.ACTIVE,
         role: UserRole.USER,
       });
@@ -137,6 +139,7 @@ export class AuthService {
       user.providerId = providerId;
       if (provider === "apple" && providerRefreshToken) {
         user.appleRefreshToken = providerRefreshToken;
+        user.appleClientId = providerClientId ?? null;
       }
       if (!user.name) user.name = name;
     }

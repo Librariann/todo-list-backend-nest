@@ -35,6 +35,13 @@ import { SessionService } from "./session.service";
     JwtAuthGuard,
     RolesGuard,
   ],
-  exports: [AuthService, SessionService, JwtAuthGuard, RolesGuard, JwtModule],
+  exports: [
+    AppleAuthService,
+    AuthService,
+    SessionService,
+    JwtAuthGuard,
+    RolesGuard,
+    JwtModule,
+  ],
 })
 export class AuthModule {}
