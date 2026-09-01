@@ -7,7 +7,11 @@ import {
 import { InjectRepository } from "@nestjs/typeorm";
 import * as bcrypt from "bcrypt";
 import { DataSource, Repository } from "typeorm";
-import { UserProgressChallenge } from "../entities/challenge.entity";
+import { AppleAuthService } from "../auth/apple-auth.service";
+import {
+  ChallengeRotationRun,
+  UserProgressChallenge,
+} from "../entities/challenge.entity";
 import { Goal, GoalProcess, GoalStreak } from "../entities/goal.entity";
 import { Habit, HabitLog, HabitStreak } from "../entities/habit.entity";
 import { Todo } from "../entities/todo.entity";
@@ -67,13 +71,29 @@ export class UsersService {
     @InjectRepository(UserReward)
     private readonly userRewards: Repository<UserReward>,
     private readonly dataSource: DataSource,
+    private readonly appleAuth: AppleAuthService,
   ) {}
 
   /**
    * 계정과 사용자에 속한 모든 데이터를 영구 삭제한다.
-   * push_devices와 push_deliveries는 FK onDelete CASCADE로 함께 지워진다.
    */
   async deleteMe(userId: number): Promise<void> {
+    const account = await this.users
+      .createQueryBuilder("user")
+      .addSelect("user.appleRefreshToken")
+      .addSelect("user.appleClientId")
+      .where("user.id = :userId", { userId })
+      .getOne();
+    if (!account) {
+      throw new NotFoundException(`사용자를 찾을 수 없습니다: ${userId}`);
+    }
+    if (account.appleRefreshToken) {
+      await this.appleAuth.revokeRefreshToken(
+        account.appleRefreshToken,
+        account.appleClientId,
+      );
+    }
+
     await this.dataSource.transaction(async (manager) => {
       const user = await manager.findOneBy(User, { id: userId });
       if (!user) {
@@ -96,6 +116,13 @@ export class UsersService {
         await manager.delete(entity, { userId });
       }
 
+      await manager.update(
+        ChallengeRotationRun,
+        { actorUserId: userId },
+        { actorUserId: null },
+      );
+
+      // 푸시 기기와 전송 기록은 FK ON DELETE CASCADE로 함께 삭제된다.
       await manager.delete(User, { id: userId });
     });
   }
