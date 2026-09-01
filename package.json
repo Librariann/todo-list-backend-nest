@@ -66,6 +66,7 @@
     "typescript-eslint": "^8.42.0"
   },
   "jest": {
+    "watchman": false,
     "moduleFileExtensions": [
       "js",
       "json",
