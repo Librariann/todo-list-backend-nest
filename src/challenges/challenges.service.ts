@@ -24,7 +24,9 @@ import {
   UserProgressChallenge,
   WorkType,
 } from "../entities/challenge.entity";
+import { HabitLog } from "../entities/habit.entity";
 import { Todo, TodoStatus } from "../entities/todo.entity";
+import { GoalProcess } from "../entities/goal.entity";
 import { PointsService } from "../points/points.service";
 import type { CreateChallengeDto } from "./dto/create-challenges.dto";
 import type { UpdateChallengeDto } from "./dto/update-challenges.dto";
@@ -43,6 +45,12 @@ const PERIOD_LABEL: Record<PeriodType, string> = {
   [PeriodType.WEEKLY]: "주간",
   [PeriodType.MONTHLY]: "월간",
 };
+
+const SEOUL_TIME_ZONE = "Asia/Seoul";
+
+function seoulDateKey(value: Date): string {
+  return value.toLocaleDateString("sv-SE", { timeZone: SEOUL_TIME_ZONE });
+}
 
 export interface ChallengeOutput {
   id: number;
@@ -204,9 +212,30 @@ export class ChallengesService {
 
     @InjectRepository(Todo)
     private readonly todos: Repository<Todo>,
+    @InjectRepository(HabitLog)
+    private readonly habitLogs: Repository<HabitLog>,
+
+    @InjectRepository(GoalProcess)
+    private readonly goalProcesses: Repository<GoalProcess>,
 
     private readonly points: PointsService,
   ) {}
+
+  private async assertNameAvailable(
+    name: string,
+    currentId?: number,
+  ): Promise<void> {
+    const existing = await this.challenges.findOne({ where: { name } });
+    if (!existing || Number(existing.id) === Number(currentId)) return;
+
+    if (existing.isActive) {
+      throw new ConflictException(`이미 사용중인 도전과제명 입니다: ${name}`);
+    }
+
+    throw new ConflictException(
+      `사용 중지된 도전과제명입니다. ${PERIOD_LABEL[existing.recurrenceType]} 사용 중지 목록에서 다시 사용해주세요: ${name}`,
+    );
+  }
 
   @Cron("5 0 0 * * *", { timeZone: "Asia/Seoul" })
   async rotateChallenges(): Promise<void> {
@@ -404,20 +433,25 @@ export class ChallengesService {
   ): Promise<{ selectionCount: number; selected: Challenge[] }> {
     const assignmentsRepo = manager.getRepository(ChallengeAssignment);
     const challengesRepo = manager.getRepository(Challenge);
+
     const { selectionCount, cooldownPeriods } = await this.rotationSetting(
       type,
       manager,
     );
+
     const candidates = await challengesRepo.findBy({
       recurrenceType: type,
       isActive: true,
     });
+
     const cooldownKeys = this.cooldownPeriodKeys(type, key, cooldownPeriods);
+
     const historyKeys = this.cooldownPeriodKeys(
       type,
       key,
       Math.max(cooldownPeriods, Object.values(WorkType).length),
     );
+
     const history =
       historyKeys.length > 0
         ? await assignmentsRepo.findBy({
@@ -425,7 +459,9 @@ export class ChallengesService {
             periodKey: In(historyKeys),
           })
         : [];
+
     const lastSeenPeriod = new Map<number, number>();
+
     history.forEach(({ challengeId, periodKey: assignedPeriodKey }) => {
       const challengeIdNumber = Number(challengeId);
       const periodIndex = cooldownKeys.indexOf(assignedPeriodKey);
@@ -437,13 +473,16 @@ export class ChallengesService {
         lastSeenPeriod.set(challengeIdNumber, periodIndex);
       }
     });
+
     const recentIds = new Set([
       ...lastSeenPeriod.keys(),
       ...deprioritizedIds.values(),
     ]);
+
     const preferred = this.shuffled(
       candidates.filter(({ id }) => !recentIds.has(Number(id))),
     );
+
     const fallback = this.shuffled(
       candidates.filter(({ id }) => recentIds.has(Number(id))),
     ).sort(
@@ -451,10 +490,13 @@ export class ChallengesService {
         (lastSeenPeriod.get(Number(right.id)) ?? -1) -
         (lastSeenPeriod.get(Number(left.id)) ?? -1),
     );
+
     const orderedCandidates = [...preferred, ...fallback];
+
     const availableWorkTypes = Object.values(WorkType).filter((workType) =>
       candidates.some((candidate) => candidate.workType === workType),
     );
+
     const lastSeenWorkType = new Map<WorkType, number>();
     history.forEach(({ workType, periodKey: assignedPeriodKey }) => {
       const periodIndex = historyKeys.indexOf(assignedPeriodKey);
@@ -466,26 +508,31 @@ export class ChallengesService {
         lastSeenWorkType.set(workType, periodIndex);
       }
     });
+
     const prioritizedWorkTypes = this.shuffled(availableWorkTypes).sort(
       (left, right) =>
         (lastSeenWorkType.get(right) ?? Number.POSITIVE_INFINITY) -
         (lastSeenWorkType.get(left) ?? Number.POSITIVE_INFINITY),
     );
+
     const guaranteedWorkTypes = prioritizedWorkTypes.slice(
       0,
       Math.min(selectionCount, prioritizedWorkTypes.length),
     );
+
     const requiredByWorkType = guaranteedWorkTypes
       .map((workType) =>
         orderedCandidates.find((candidate) => candidate.workType === workType),
       )
       .filter((candidate): candidate is Challenge => candidate !== undefined);
+
     const effectiveSelectionCount = Math.min(candidates.length, selectionCount);
     const selectedIds = new Set(requiredByWorkType.map(({ id }) => Number(id)));
     const selected = [
       ...requiredByWorkType,
       ...orderedCandidates.filter(({ id }) => !selectedIds.has(Number(id))),
     ].slice(0, effectiveSelectionCount);
+
     return { selectionCount, selected };
   }
 
@@ -765,21 +812,7 @@ export class ChallengesService {
   }
 
   async create(dto: CreateChallengeDto): Promise<ChallengeOutput> {
-    const existing = await this.challenges.findOne({
-      where: { name: dto.name },
-    });
-    if (existing?.isActive) {
-      throw new ConflictException(
-        `이미 사용중인 도전과제명 입니다: ${dto.name}`,
-      );
-    }
-    if (existing) {
-      // 이름은 전체 기준으로 유일하지만 관리자 화면의 사용 중지 목록은 주기별로 나뉘어 있어,
-      // 어느 주기를 열어야 하는지 알려주지 않으면 안내대로 가도 항목을 찾지 못한다.
-      throw new ConflictException(
-        `사용 중지된 도전과제명입니다. ${PERIOD_LABEL[existing.recurrenceType]} 사용 중지 목록에서 다시 사용해주세요: ${dto.name}`,
-      );
-    }
+    await this.assertNameAvailable(dto.name);
 
     return challengeResponse(
       await this.challenges.save(this.challenges.create(dto)),
@@ -791,6 +824,10 @@ export class ChallengesService {
 
     if (!item) {
       throw new NotFoundException(`도전과제를 찾을 수 없습니다: ${id}`);
+    }
+
+    if (dto.name !== undefined) {
+      await this.assertNameAvailable(dto.name, id);
     }
 
     Object.assign(item, dto);
@@ -858,113 +895,38 @@ export class ChallengesService {
     return result;
   }
 
-  async record(
+  async recalculateProgress(
     userId: number,
     workType: WorkType,
+    manager?: EntityManager,
   ): Promise<ChallengeAchievementOutput[]> {
     const items = await this.currentAssignments(workType);
-    const achievements: ChallengeAchievementOutput[] = [];
-
-    for (const assignment of items) {
-      const key = assignment.periodKey;
-      let progress = await this.progresses.findOne({
-        where: [
-          { userId, assignmentId: assignment.id },
-          {
-            userId,
-            challengeId: assignment.challengeId,
-            periodType: assignment.periodType,
-            periodKey: key,
-          },
-        ],
-      });
-
-      if (!progress) {
-        progress = this.progresses.create({
-          userId,
-          assignmentId: assignment.id,
-          challengeId: assignment.challengeId,
-          periodType: assignment.periodType,
-          periodKey: key,
-          currentCount: 0,
-          isAchieved: false,
-        });
-      } else if (
-        progress.assignmentId === null ||
-        progress.assignmentId === undefined
-      ) {
-        progress.assignmentId = assignment.id;
-      }
-
-      //달성이 완료 됐거나 일일 최대 횟수를 초과하면 기록하지 않음
-      if (
-        progress.isAchieved ||
-        progress.currentCount + 1 > assignment.dailyMaxCount
-      ) {
-        continue;
-      }
-
-      progress.currentCount += 1;
-
-      // 달성 완료 시 포인트 지급, 완료여부 true로 변경
-      if (progress.currentCount >= assignment.targetCount) {
-        progress.isAchieved = true;
-        await this.points.awardChallenge(
-          userId,
-          assignment.point,
-          assignment.challengeId,
-          assignment.periodType,
-          undefined,
-          key,
-        );
-        achievements.push({
-          challengeId: Number(assignment.challengeId),
-          name: assignment.name,
-          description: assignment.description,
-          point: assignment.point,
-          periodType: assignment.periodType,
-          periodKey: key,
-        });
-      }
-
-      await this.progresses.save(progress);
-    }
-
-    return achievements;
+    return this.syncProgressByAssignments(userId, items, manager);
   }
 
-  async syncTodoProgress(
+  private async syncProgressByAssignments(
     userId: number,
+    items: ChallengeAssignment[],
     manager?: EntityManager,
   ): Promise<ChallengeAchievementOutput[]> {
     const progresses =
       manager?.getRepository(UserProgressChallenge) ?? this.progresses;
     const todos = manager?.getRepository(Todo) ?? this.todos;
-    const items = await this.currentAssignments(WorkType.TODOS);
+    const habitLogs = manager?.getRepository(HabitLog) ?? this.habitLogs;
+    const goalProcesses =
+      manager?.getRepository(GoalProcess) ?? this.goalProcesses;
     const achievements: ChallengeAchievementOutput[] = [];
 
     for (const assignment of items) {
       const key = assignment.periodKey;
-      const end = goalPeriodEnd(key, assignment.periodType, 1);
-      const completed = await todos.find({
-        where: {
-          userId,
-          status: TodoStatus.DONE,
-          targetDate: Between(key, end),
-        },
-      });
-      const countByDate = new Map<string, number>();
-      completed.forEach((todo) => {
-        countByDate.set(
-          todo.targetDate,
-          (countByDate.get(todo.targetDate) ?? 0) + 1,
-        );
-      });
-      const contribution = Array.from(countByDate.values()).reduce(
-        (total, count) => total + Math.min(count, assignment.dailyMaxCount),
-        0,
+      const currentCount = Math.min(
+        await this.contributionCount(userId, assignment, {
+          todos,
+          habitLogs,
+          goalProcesses,
+        }),
+        assignment.targetCount,
       );
-      const currentCount = Math.min(contribution, assignment.targetCount);
 
       let progress = await progresses.findOne({
         where: [
@@ -979,7 +941,10 @@ export class ChallengesService {
         lock: manager ? { mode: "pessimistic_write" } : undefined,
       });
 
-      if (!progress && currentCount === 0) continue;
+      if (!progress && currentCount === 0) {
+        continue;
+      }
+
       if (!progress) {
         progress = progresses.create({
           userId,
@@ -1033,5 +998,72 @@ export class ChallengesService {
     }
 
     return achievements;
+  }
+
+  private async contributionCount(
+    userId: number,
+    assignment: ChallengeAssignment,
+    repos: {
+      todos: Repository<Todo>;
+      habitLogs: Repository<HabitLog>;
+      goalProcesses: Repository<GoalProcess>;
+    },
+  ): Promise<number> {
+    const key = assignment.periodKey;
+    const end = goalPeriodEnd(key, assignment.periodType, 1);
+    const countByDate = new Map<string, number>();
+
+    if (assignment.workType === WorkType.TODOS) {
+      const completed = await repos.todos.find({
+        where: {
+          userId,
+          status: TodoStatus.DONE,
+          targetDate: Between(key, end),
+        },
+      });
+      completed.forEach((todo) => {
+        countByDate.set(
+          todo.targetDate,
+          (countByDate.get(todo.targetDate) ?? 0) + 1,
+        );
+      });
+    }
+
+    if (assignment.workType === WorkType.HABITS) {
+      const logs = await repos.habitLogs.find({
+        where: {
+          userId,
+          isAchieved: true,
+          logDate: Between(key, end),
+        },
+      });
+      logs.forEach((log) => {
+        countByDate.set(log.logDate, (countByDate.get(log.logDate) ?? 0) + 1);
+      });
+    }
+
+    if (assignment.workType === WorkType.GOALS) {
+      const from = new Date(`${key}T00:00:00.000+09:00`);
+      const to = new Date(`${end}T23:59:59.999+09:00`);
+      const processes = await repos.goalProcesses.find({
+        where: {
+          userId,
+          isAchieved: true,
+          achievedAt: Between(from, to),
+        },
+      });
+
+      processes.forEach((process) => {
+        if (!process.achievedAt) return;
+
+        const date = seoulDateKey(process.achievedAt);
+        countByDate.set(date, (countByDate.get(date) ?? 0) + 1);
+      });
+    }
+
+    return Array.from(countByDate.values()).reduce(
+      (total, count) => total + Math.min(count, assignment.dailyMaxCount),
+      0,
+    );
   }
 }

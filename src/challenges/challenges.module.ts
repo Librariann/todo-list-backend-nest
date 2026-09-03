@@ -8,6 +8,8 @@ import {
   UserProgressChallenge,
 } from "../entities/challenge.entity";
 import { PointsModule } from "../points/points.module";
+import { HabitLog } from "../entities/habit.entity";
+import { GoalProcess } from "../entities/goal.entity";
 import { Todo } from "../entities/todo.entity";
 import {
   ChallengesController,
@@ -22,6 +24,8 @@ import { ChallengesService } from "./challenges.service";
       ChallengeRotationRun,
       ChallengeRotationSetting,
       UserProgressChallenge,
+      HabitLog,
+      GoalProcess,
       Todo,
     ]),
     PointsModule,
