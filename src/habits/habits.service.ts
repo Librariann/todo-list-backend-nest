@@ -6,7 +6,7 @@ import {
 } from "@nestjs/common";
 import { Cron } from "@nestjs/schedule";
 import { InjectRepository } from "@nestjs/typeorm";
-import { Between, Repository } from "typeorm";
+import { Between, DataSource, Repository } from "typeorm";
 import {
   ChallengeAchievementOutput,
   ChallengesService,
@@ -72,6 +72,7 @@ export class HabitsService {
     @InjectRepository(HabitStreak)
     private readonly streaks: Repository<HabitStreak>,
     private readonly challenges: ChallengesService,
+    private readonly dataSource: DataSource,
   ) {}
 
   async create(userId: number, dto: CreateHabitDto): Promise<HabitOutput> {
@@ -154,63 +155,71 @@ export class HabitsService {
     await this.habits.save(getHabits);
   }
   async increment(userId: number, id: number): Promise<HabitIncrementOutput> {
-    const getHabits = await this.owned(userId, id);
-    let log = await this.logs.findOneBy({
-      habitId: id,
-      userId,
-      logDate: today(),
-    });
-
-    if (!log) {
-      log = this.logs.create({
-        habitId: id,
-        userId,
-        logDate: today(),
-        currentCount: 0,
-        isAchieved: false,
+    return this.dataSource.transaction(async (manager) => {
+      const habits = manager.getRepository(Habit);
+      const logs = manager.getRepository(HabitLog);
+      const streaks = manager.getRepository(HabitStreak);
+      const habit = await habits.findOne({
+        where: { id, userId },
+        lock: { mode: "pessimistic_write" },
       });
-    }
 
-    const newlyAchieved =
-      !log.isAchieved && log.currentCount + 1 >= getHabits.dailyTarget;
-    log.currentCount += 1;
+      if (!habit) {
+        throw new NotFoundException(`습관을 찾을 수 없습니다: ${id}`);
+      }
 
-    let achievements: ChallengeAchievementOutput[] = [];
+      const logDate = today();
+      let log = await logs.findOneBy({ habitId: id, userId, logDate });
 
-    if (newlyAchieved) {
-      log.isAchieved = true;
-    }
-
-    await this.logs.save(log);
-
-    let streak = await this.streaks.findOneBy({ habitId: id, userId });
-
-    if (newlyAchieved) {
-      if (!streak) {
-        streak = this.streaks.create({
+      if (!log) {
+        log = logs.create({
           habitId: id,
           userId,
-          currentStreak: 0,
-          longestStreak: 0,
+          logDate,
+          currentCount: 0,
+          isAchieved: false,
         });
       }
 
-      streak.currentStreak += 1;
-      streak.longestStreak = Math.max(
-        streak.longestStreak,
-        streak.currentStreak,
-      );
-      streak = await this.streaks.save(streak);
+      const newlyAchieved =
+        !log.isAchieved && log.currentCount + 1 >= habit.dailyTarget;
+      log.currentCount += 1;
+      if (newlyAchieved) log.isAchieved = true;
+      await logs.save(log);
 
-      achievements =
-        (await this.challenges.recalculateProgress(userId, WorkType.HABITS)) ??
-        [];
-    }
+      let streak = await streaks.findOneBy({ habitId: id, userId });
+      let achievements: ChallengeAchievementOutput[] = [];
 
-    return {
-      habit: response(getHabits, log, streak),
-      achievements,
-    };
+      if (newlyAchieved) {
+        if (!streak) {
+          streak = streaks.create({
+            habitId: id,
+            userId,
+            currentStreak: 0,
+            longestStreak: 0,
+          });
+        }
+
+        streak.currentStreak += 1;
+        streak.longestStreak = Math.max(
+          streak.longestStreak,
+          streak.currentStreak,
+        );
+        streak = await streaks.save(streak);
+
+        achievements =
+          (await this.challenges.recalculateProgress(
+            userId,
+            WorkType.HABITS,
+            manager,
+          )) ?? [];
+      }
+
+      return {
+        habit: response(habit, log, streak),
+        achievements,
+      };
+    });
   }
 
   // 습관 카운터 감소
