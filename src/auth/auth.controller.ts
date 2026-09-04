@@ -13,7 +13,9 @@ import {
 import { IsEmail, IsNotEmpty, IsOptional, IsString } from "class-validator";
 import type { Request, Response } from "express";
 import { success } from "../common/api-response";
+import { User } from "../entities/user.entity";
 import { AuthService } from "./auth.service";
+import { CurrentUser } from "./current-user.decorator";
 import { OAuthHandoffService } from "./oauth-handoff.service";
 import { OAuthService } from "./oauth.service";
 import { Public } from "./public.decorator";
@@ -34,6 +36,11 @@ class OAuthExchangeDto {
   @IsString() @IsNotEmpty() code: string;
   @IsString() @IsNotEmpty() codeVerifier: string;
 }
+class WebHandoffDto {
+  @IsString() @IsNotEmpty() codeChallenge: string;
+}
+
+const MOBILE_OAUTH_CLIENT_COOKIE = "oauth_client_mobile";
 
 @Controller()
 export class AuthController {
@@ -80,6 +87,7 @@ export class AuthController {
     @Query("code_challenge") codeChallenge: string,
     @Res() res: Response,
   ) {
+    res.clearCookie(MOBILE_OAUTH_CLIENT_COOKIE);
     if (!/^[A-Za-z0-9_-]{43,128}$/.test(codeChallenge ?? "")) {
       throw new UnauthorizedException(
         "PKCE challenge 형식이 올바르지 않습니다.",
@@ -100,6 +108,29 @@ export class AuthController {
     });
     return res.redirect(this.oauth.authorizationUrl(provider, state));
   }
+
+  @Public() @Get("api/auth/mobile/oauth/authorize/google") mobileGoogleAuthorize(
+    @Query("code_challenge") codeChallenge: string,
+    @Res() res: Response,
+  ) {
+    if (!/^[A-Za-z0-9_-]{43,128}$/.test(codeChallenge ?? "")) {
+      throw new UnauthorizedException(
+        "PKCE challenge 형식이 올바르지 않습니다.",
+      );
+    }
+    const state = this.oauth.state();
+    const cookieOptions = {
+      httpOnly: true,
+      secure: process.env.COOKIE_SECURE === "true",
+      sameSite: cookieSameSite(),
+      maxAge: 300000,
+    } as const;
+    res.cookie("oauth2_state", state, cookieOptions);
+    res.cookie("oauth_pkce_challenge", codeChallenge, cookieOptions);
+    res.cookie(MOBILE_OAUTH_CLIENT_COOKIE, "true", cookieOptions);
+    return res.redirect(this.oauth.authorizationUrl("google", state));
+  }
+
   @Public() @Get("login/oauth2/code/:provider") async callback(
     @Param("provider") provider: string,
     @Query("code") code: string,
@@ -108,6 +139,12 @@ export class AuthController {
     @Res() res: Response,
   ) {
     const frontend = process.env.FRONTEND_URL ?? "http://localhost:3000";
+    const mobileRedirect =
+      process.env.MOBILE_OAUTH_REDIRECT_URI ?? "growdo://oauth/callback";
+    const isMobile = req.cookies?.[MOBILE_OAUTH_CLIENT_COOKIE] === "true";
+    const callbackUrl = isMobile
+      ? mobileRedirect
+      : `${frontend}/oauth/callback`;
     const codeChallenge = req.cookies?.oauth_pkce_challenge as
       string | undefined;
     if (
@@ -115,18 +152,22 @@ export class AuthController {
       !state ||
       state !== req.cookies?.oauth2_state ||
       !codeChallenge
-    )
-      return res.redirect(`${frontend}/oauth/callback?error=oauth_state`);
+    ) {
+      res.clearCookie(MOBILE_OAUTH_CLIENT_COOKIE);
+      return res.redirect(`${callbackUrl}?error=oauth_state`);
+    }
     try {
       const user = await this.oauth.callback(provider, code);
       const loginCode = await this.handoff.issue(user.id, codeChallenge);
       res.clearCookie("oauth2_state");
       res.clearCookie("oauth_pkce_challenge");
+      res.clearCookie(MOBILE_OAUTH_CLIENT_COOKIE);
       return res.redirect(
-        `${frontend}/oauth/callback?code=${encodeURIComponent(loginCode)}`,
+        `${callbackUrl}?code=${encodeURIComponent(loginCode)}`,
       );
     } catch {
-      return res.redirect(`${frontend}/oauth/callback?error=oauth_failed`);
+      res.clearCookie(MOBILE_OAUTH_CLIENT_COOKIE);
+      return res.redirect(`${callbackUrl}?error=oauth_failed`);
     }
   }
 
@@ -151,5 +192,24 @@ export class AuthController {
       email: result.email,
     };
     return success(data, "OAuth 로그인이 완료되었습니다.");
+  }
+
+  @Public() @Post("api/auth/mobile/oauth/exchange") async mobileExchange(
+    @Body() dto: OAuthExchangeDto,
+  ) {
+    const userId = await this.handoff.consume(dto.code, dto.codeVerifier);
+    const result = await this.auth.issueByUserId(userId);
+    return success(result, "모바일 OAuth 로그인이 완료되었습니다.");
+  }
+
+  @Post("api/auth/mobile/web-handoff") async issueWebHandoff(
+    @Body() dto: WebHandoffDto,
+    @CurrentUser() user: User,
+  ) {
+    const code = await this.handoff.issue(user.id, dto.codeChallenge);
+    return success(
+      { code, expiresIn: 60 },
+      "WebView 로그인 코드가 발급되었습니다.",
+    );
   }
 }
