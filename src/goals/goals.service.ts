@@ -7,6 +7,8 @@ import {
 import { Cron } from "@nestjs/schedule";
 import { InjectRepository } from "@nestjs/typeorm";
 import {
+  DataSource,
+  EntityManager,
   In,
   LessThan,
   LessThanOrEqual,
@@ -175,6 +177,7 @@ export class GoalsService {
     @InjectRepository(GoalStreak)
     private readonly streaks: Repository<GoalStreak>,
     private readonly challenges: ChallengesService,
+    private readonly dataSource: DataSource,
   ) {}
 
   async create(userId: number, dto: CreateGoalDto): Promise<GoalOutput> {
@@ -363,54 +366,66 @@ export class GoalsService {
     }
   }
   async achieve(userId: number, id: number): Promise<GoalAchievementOutput> {
-    const goal = await this.owned(userId, id);
-    const currentDate = today();
-    const currentGoals = await this.processes.findOne({
-      where: {
-        userId,
-        goalId: id,
-        isFinalized: false,
-        periodStart: LessThanOrEqual(currentDate),
-        periodEnd: MoreThanOrEqual(currentDate),
-      },
-      relations: { goal: true },
+    return this.dataSource.transaction(async (manager) => {
+      const goals = manager.getRepository(Goal);
+      const processes = manager.getRepository(GoalProcess);
+      const goal = await goals.findOne({
+        where: { id, userId },
+        lock: { mode: "pessimistic_write" },
+      });
+
+      if (!goal) {
+        throw new NotFoundException(`목표를 찾을 수 없습니다: ${id}`);
+      }
+
+      const currentDate = today();
+      const currentGoal = await processes.findOne({
+        where: {
+          userId,
+          goalId: id,
+          isFinalized: false,
+          periodStart: LessThanOrEqual(currentDate),
+          periodEnd: MoreThanOrEqual(currentDate),
+        },
+        lock: { mode: "pessimistic_write" },
+      });
+
+      if (!currentGoal) {
+        throw new BadRequestException(
+          "오늘 완료할 수 있는 목표 기간이 아닙니다",
+        );
+      }
+
+      if (currentGoal.isAchieved) {
+        throw new BadRequestException("이미 달성된 목표입니다");
+      }
+
+      currentGoal.currentCount += 1;
+      const newlyAchieved = currentGoal.currentCount >= goal.targetCount;
+      if (newlyAchieved) {
+        currentGoal.isAchieved = true;
+        currentGoal.achievedAt = new Date();
+      }
+      await processes.save(currentGoal);
+
+      let achievements: ChallengeAchievementOutput[] = [];
+      if (newlyAchieved) {
+        achievements =
+          (await this.challenges.recalculateProgress(
+            userId,
+            WorkType.GOALS,
+            manager,
+          )) ?? [];
+        await this.updateStreak(userId, id, true, manager);
+      }
+
+      currentGoal.goal = goal;
+      return {
+        data: processResponse(currentGoal),
+        achieved: currentGoal.isAchieved,
+        achievements,
+      };
     });
-
-    if (!currentGoals) {
-      throw new BadRequestException("오늘 완료할 수 있는 목표 기간이 아닙니다");
-    }
-
-    if (currentGoals.isAchieved) {
-      throw new BadRequestException("이미 달성된 목표입니다");
-    }
-
-    currentGoals.currentCount += 1;
-    let achievements: ChallengeAchievementOutput[] = [];
-    const newlyAchieved = currentGoals.currentCount >= goal.targetCount;
-
-    if (newlyAchieved) {
-      currentGoals.isAchieved = true;
-      currentGoals.achievedAt = new Date();
-    }
-
-    await this.processes.save(currentGoals);
-
-    if (newlyAchieved) {
-      achievements =
-        (await this.challenges.recalculateProgress(userId, WorkType.GOALS)) ??
-        [];
-    }
-
-    if (newlyAchieved) {
-      await this.updateStreak(userId, id, true);
-    }
-    currentGoals.goal = goal;
-
-    return {
-      data: processResponse(currentGoals),
-      achieved: currentGoals.isAchieved,
-      achievements,
-    };
   }
   async progress(
     userId: number,
@@ -489,8 +504,10 @@ export class GoalsService {
     userId: number,
     goalId: number,
     achieved: boolean,
+    manager?: EntityManager,
   ): Promise<void> {
-    const streak = await this.streaks.findOneBy({ userId, goalId });
+    const streaks = manager?.getRepository(GoalStreak) ?? this.streaks;
+    const streak = await streaks.findOneBy({ userId, goalId });
 
     if (!streak) {
       return;
@@ -498,7 +515,7 @@ export class GoalsService {
 
     streak.currentStreak = achieved ? streak.currentStreak + 1 : 0;
     streak.longestStreak = Math.max(streak.longestStreak, streak.currentStreak);
-    await this.streaks.save(streak);
+    await streaks.save(streak);
   }
 
   // 매시간 10분에 만료된 목표 기간을 마감하고 다음 기간을 준비
