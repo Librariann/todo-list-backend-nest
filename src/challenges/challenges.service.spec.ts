@@ -1,4 +1,4 @@
-import { BadRequestException } from "@nestjs/common";
+import { BadRequestException, ConflictException } from "@nestjs/common";
 import { afterAll, beforeAll, describe, expect, it, jest } from "@jest/globals";
 import type { Repository } from "typeorm";
 import { PeriodType } from "../common/date";
@@ -10,8 +10,11 @@ import {
   UserProgressChallenge,
   WorkType,
 } from "../entities/challenge.entity";
+import { GoalProcess } from "../entities/goal.entity";
+import { HabitLog } from "../entities/habit.entity";
 import { Todo, TodoStatus } from "../entities/todo.entity";
 import type { PointsService } from "../points/points.service";
+import type { CreateChallengeDto } from "./dto/create-challenges.dto";
 import { ChallengesService } from "./challenges.service";
 
 function challenge(overrides: Partial<Challenge> = {}): Challenge {
@@ -27,6 +30,22 @@ function challenge(overrides: Partial<Challenge> = {}): Challenge {
     targetCount: 1,
     dailyMaxCount: 1,
     point: 30,
+    isActive: true,
+    ...overrides,
+  };
+}
+
+function challengeDto(
+  overrides: Partial<CreateChallengeDto> = {},
+): CreateChallengeDto {
+  return {
+    name: "새 도전",
+    description: "새로운 도전과제",
+    recurrenceType: PeriodType.DAILY,
+    workType: WorkType.TODOS,
+    targetCount: 1,
+    dailyMaxCount: 1,
+    point: 10,
     isActive: true,
     ...overrides,
   };
@@ -104,7 +123,7 @@ function todo(overrides: Partial<Todo> = {}): Todo {
   } as Todo;
 }
 
-describe("ChallengesService.syncTodoProgress", () => {
+describe("ChallengesService.recalculateProgress", () => {
   beforeAll(() => {
     jest.useFakeTimers();
     jest.setSystemTime(new Date("2026-08-24T12:00:00+09:00"));
@@ -118,6 +137,9 @@ describe("ChallengesService.syncTodoProgress", () => {
     completedTodos: Todo[],
     challengeEntity = challenge(),
     progressEntity: UserProgressChallenge | null = progress(),
+    achievedHabitLogs: HabitLog[] = [],
+    achievedGoalProcesses: GoalProcess[] = [],
+    assignmentPeriodKey = "2026-08-24",
   ) => {
     const challengeRepository = {
       findBy: jest.fn((where: Partial<Challenge>) =>
@@ -132,8 +154,19 @@ describe("ChallengesService.syncTodoProgress", () => {
       find: jest.fn(({ where }: { where: Partial<ChallengeAssignment> }) =>
         Promise.resolve(
           where.periodType === challengeEntity.recurrenceType
-            ? [assignmentFromChallenge(challengeEntity)]
-            : [],
+            ? [
+                assignmentFromChallenge(challengeEntity, {
+                  periodKey: assignmentPeriodKey,
+                }),
+              ]
+            : [
+                assignmentFromChallenge(challengeEntity, {
+                  id:
+                    900 + Object.values(PeriodType).indexOf(where.periodType!),
+                  periodType: where.periodType!,
+                  workType: undefined as unknown as WorkType,
+                }),
+              ],
         ),
       ),
       findBy: jest.fn(() => Promise.resolve([])),
@@ -173,6 +206,12 @@ describe("ChallengesService.syncTodoProgress", () => {
     const todoRepository = {
       find: jest.fn(() => Promise.resolve(completedTodos)),
     } as unknown as Repository<Todo>;
+    const habitLogRepository = {
+      find: jest.fn(() => Promise.resolve(achievedHabitLogs)),
+    } as unknown as Repository<HabitLog>;
+    const goalProcessRepository = {
+      find: jest.fn(() => Promise.resolve(achievedGoalProcesses)),
+    } as unknown as Repository<GoalProcess>;
     const awardChallenge = jest.fn();
     const revokeChallenge = jest.fn();
     const points = {
@@ -188,6 +227,8 @@ describe("ChallengesService.syncTodoProgress", () => {
         rotationRunRepository,
         progressRepository,
         todoRepository,
+        habitLogRepository,
+        goalProcessRepository,
         points,
       ),
       points,
@@ -202,7 +243,7 @@ describe("ChallengesService.syncTodoProgress", () => {
   it("keeps the achievement when another completed todo still satisfies it", async () => {
     const { service, revokeChallenge, progressEntity } = setup([todo()]);
 
-    await service.syncTodoProgress(7);
+    await service.recalculateProgress(7, WorkType.TODOS);
 
     expect(progressEntity.currentCount).toBe(1);
     expect(progressEntity.isAchieved).toBe(true);
@@ -212,7 +253,7 @@ describe("ChallengesService.syncTodoProgress", () => {
   it("reverts achievement and points when completed todos drop below target", async () => {
     const { service, revokeChallenge, progressEntity } = setup([]);
 
-    await service.syncTodoProgress(7);
+    await service.recalculateProgress(7, WorkType.TODOS);
 
     expect(progressEntity.currentCount).toBe(0);
     expect(progressEntity.isAchieved).toBe(false);
@@ -237,7 +278,7 @@ describe("ChallengesService.syncTodoProgress", () => {
       null,
     );
 
-    await service.syncTodoProgress(7);
+    await service.recalculateProgress(7, WorkType.TODOS);
 
     expect(progressEntity.periodKey).toBe("2026-08-24");
     expect(progressEntity.currentCount).toBe(3);
@@ -255,7 +296,7 @@ describe("ChallengesService.syncTodoProgress", () => {
       pending,
     );
 
-    const achievements = await service.syncTodoProgress(7);
+    const achievements = await service.recalculateProgress(7, WorkType.TODOS);
 
     expect(progressEntity.isAchieved).toBe(true);
     expect(awardChallenge).toHaveBeenCalledWith(
@@ -285,10 +326,174 @@ describe("ChallengesService.syncTodoProgress", () => {
       null,
     );
 
-    await service.syncTodoProgress(7);
+    await service.recalculateProgress(7, WorkType.TODOS);
 
     expect(createProgress).not.toHaveBeenCalled();
     expect(saveProgress).not.toHaveBeenCalled();
+  });
+
+  it("applies the daily maximum per date to a weekly habit challenge", async () => {
+    const weeklyHabit = challenge({
+      workType: WorkType.HABITS,
+      recurrenceType: PeriodType.WEEKLY,
+      targetCount: 5,
+      dailyMaxCount: 2,
+    });
+    const logs = [
+      { userId: 7, isAchieved: true, logDate: "2026-08-24" },
+      { userId: 7, isAchieved: true, logDate: "2026-08-24" },
+      { userId: 7, isAchieved: true, logDate: "2026-08-24" },
+      { userId: 7, isAchieved: true, logDate: "2026-08-25" },
+    ] as HabitLog[];
+    const { service, progressEntity } = setup([], weeklyHabit, null, logs);
+
+    await service.recalculateProgress(7, WorkType.HABITS);
+
+    expect(progressEntity.currentCount).toBe(3);
+    expect(progressEntity.isAchieved).toBe(false);
+  });
+
+  it("uses Korean calendar dates for a monthly goal challenge", async () => {
+    const monthlyGoal = challenge({
+      workType: WorkType.GOALS,
+      recurrenceType: PeriodType.MONTHLY,
+      targetCount: 3,
+      dailyMaxCount: 1,
+    });
+    const processes = [
+      {
+        userId: 7,
+        isAchieved: true,
+        achievedAt: new Date("2026-08-01T00:30:00+09:00"),
+      },
+      {
+        userId: 7,
+        isAchieved: true,
+        achievedAt: new Date("2026-08-01T08:00:00+09:00"),
+      },
+      {
+        userId: 7,
+        isAchieved: true,
+        achievedAt: new Date("2026-08-02T00:30:00+09:00"),
+      },
+    ] as GoalProcess[];
+    const { service, progressEntity } = setup(
+      [],
+      monthlyGoal,
+      null,
+      [],
+      processes,
+      "2026-08-01",
+    );
+
+    await service.recalculateProgress(7, WorkType.GOALS);
+
+    expect(progressEntity.currentCount).toBe(2);
+    expect(progressEntity.isAchieved).toBe(false);
+  });
+});
+
+describe("ChallengesService challenge management", () => {
+  const setup = (
+    existingByName: Challenge | null = null,
+    existingById: Challenge | null = existingByName,
+  ) => {
+    const findOne = jest.fn(() => Promise.resolve(existingByName));
+    const findOneBy = jest.fn(() => Promise.resolve(existingById));
+    const create = jest.fn((dto: CreateChallengeDto) =>
+      challenge({ id: 99, ...dto }),
+    );
+    const save = jest.fn((item: Challenge) => Promise.resolve(item));
+    const challengeRepository = {
+      findOne,
+      findOneBy,
+      create,
+      save,
+    } as unknown as Repository<Challenge>;
+    const service = new ChallengesService(
+      challengeRepository,
+      {} as Repository<ChallengeAssignment>,
+      {} as Repository<ChallengeRotationSetting>,
+      {} as Repository<ChallengeRotationRun>,
+      {} as Repository<UserProgressChallenge>,
+      {} as Repository<Todo>,
+      {} as Repository<HabitLog>,
+      {} as Repository<GoalProcess>,
+      {} as PointsService,
+    );
+
+    return { service, findOne, create, save };
+  };
+
+  it("rejects a name already used by an active challenge", async () => {
+    const { service, save } = setup(challenge({ name: "물 마시기" }));
+
+    await expect(
+      service.create(challengeDto({ name: "물 마시기" })),
+    ).rejects.toThrow(ConflictException);
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it("guides the admin to restore an inactive challenge instead of recreating it", async () => {
+    const inactive = challenge({
+      name: "주간 정리",
+      recurrenceType: PeriodType.WEEKLY,
+      isActive: false,
+    });
+    const { service } = setup(inactive);
+
+    await expect(
+      service.create(challengeDto({ name: "주간 정리" })),
+    ).rejects.toThrow(
+      "사용 중지된 도전과제명입니다. 주간 사용 중지 목록에서 다시 사용해주세요: 주간 정리",
+    );
+  });
+
+  it("creates a challenge when its name is available", async () => {
+    const { service, create, save } = setup();
+    const dto = challengeDto();
+
+    const result = await service.create(dto);
+
+    expect(create).toHaveBeenCalledWith(dto);
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(result.name).toBe(dto.name);
+  });
+
+  it("prevents renaming a challenge to another challenge's name", async () => {
+    const current = challenge({ id: 1, name: "현재 이름" });
+    const duplicate = challenge({ id: 2, name: "중복 이름" });
+    const { service, save } = setup(duplicate, current);
+
+    await expect(
+      service.update(current.id, { name: duplicate.name }),
+    ).rejects.toThrow(ConflictException);
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it("restores the same inactive challenge instead of creating a duplicate", async () => {
+    const current = challenge({ id: 1, name: "현재 이름", isActive: false });
+    const { service, save } = setup(current, current);
+
+    const result = await service.update(current.id, {
+      name: current.name,
+      isActive: true,
+    });
+
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(result.isActive).toBe(true);
+  });
+
+  it("deactivates a challenge while preserving the record", async () => {
+    const current = challenge({ isActive: true });
+    const { service, save } = setup(null, current);
+
+    const result = await service.remove(current.id);
+
+    expect(save).toHaveBeenCalledWith(
+      expect.objectContaining({ isActive: false }),
+    );
+    expect(result.isActive).toBe(false);
   });
 });
 
@@ -374,6 +579,8 @@ describe("ChallengesService challenge rotation", () => {
       rotationRunRepository,
       progressRepository,
       {} as Repository<Todo>,
+      {} as Repository<HabitLog>,
+      {} as Repository<GoalProcess>,
       {} as PointsService,
     ) as unknown as {
       ensureAssignments(

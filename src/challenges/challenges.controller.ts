@@ -118,6 +118,7 @@ export class ChallengesController {
   }
 
   @Post("register")
+  @Roles(UserRole.ADMIN)
   async create(
     @Body() dto: CreateChallengeDto,
   ): Promise<ApiResponse<ChallengeOutput>> {
@@ -126,6 +127,7 @@ export class ChallengesController {
   }
 
   @Patch(":id")
+  @Roles(UserRole.ADMIN)
   async update(
     @Param("id", ParseIntPipe) id: number,
     @Body() dto: UpdateChallengeDto,
@@ -135,11 +137,12 @@ export class ChallengesController {
   }
 
   @Delete(":id")
+  @Roles(UserRole.ADMIN)
   async remove(
     @Param("id", ParseIntPipe) id: number,
   ): Promise<ApiResponse<ChallengeOutput>> {
     const result = await this.service.remove(id);
-    return success(result, "도전과제를 성공적으로 삭제 완료되었습니다.");
+    return success(result, "도전과제 사용을 중지했습니다.");
   }
 }
 
@@ -168,7 +171,7 @@ export class UserChallengesController {
     @CurrentUser() user: User,
     @Body("workType") workType: WorkType,
   ): Promise<ApiResponse<ChallengeAchievementOutput[]>> {
-    const result = await this.service.record(user.id, workType);
+    const result = await this.service.recalculateProgress(user.id, workType);
     return success(result, "도전과제 진행상황이 업데이트되었습니다.");
   }
 }
