@@ -47,6 +47,9 @@ function setup(entity: Goal, currentProcess: GoalProcess, currentStreak = 1) {
   const goalRepository = {
     findOneBy: jest.fn(() => Promise.resolve(entity)),
   };
+  const lockedGoalRepository = {
+    findOne: jest.fn(() => Promise.resolve(entity)),
+  };
   const processRepository = {
     findOne: jest.fn(() => Promise.resolve(currentProcess)),
     find: jest.fn(() => Promise.resolve([] as GoalProcess[])),
@@ -60,11 +63,25 @@ function setup(entity: Goal, currentProcess: GoalProcess, currentStreak = 1) {
   const challenges = {
     recalculateProgress: jest.fn(() => Promise.resolve([])),
   };
+  const manager = {
+    getRepository: jest.fn((target: unknown) => {
+      if (target === Goal) return lockedGoalRepository;
+      if (target === GoalProcess) return processRepository;
+      if (target === GoalStreak) return streakRepository;
+      throw new Error("unexpected repository");
+    }),
+  };
+  const dataSource = {
+    transaction: jest.fn((callback: (value: typeof manager) => unknown) =>
+      callback(manager),
+    ),
+  };
   const service = new GoalsService(
     goalRepository as never,
     processRepository as never,
     streakRepository as never,
     challenges as never,
+    dataSource as never,
   );
 
   return {
@@ -73,10 +90,31 @@ function setup(entity: Goal, currentProcess: GoalProcess, currentStreak = 1) {
     processRepository,
     streakRepository,
     challenges,
+    manager,
+    lockedGoalRepository,
   };
 }
 
 describe("GoalsService.achieve", () => {
+  it("locks the goal and current period while completing it", async () => {
+    const entity = goal(PeriodType.DAILY);
+    const currentProcess = process(entity);
+    const { service, lockedGoalRepository, processRepository } = setup(
+      entity,
+      currentProcess,
+    );
+
+    await service.achieve(7, 9);
+
+    expect(lockedGoalRepository.findOne).toHaveBeenCalledWith({
+      where: { id: 9, userId: 7 },
+      lock: { mode: "pessimistic_write" },
+    });
+    expect(processRepository.findOne).toHaveBeenCalledWith(
+      expect.objectContaining({ lock: { mode: "pessimistic_write" } }),
+    );
+  });
+
   it.each([PeriodType.DAILY, PeriodType.WEEKLY, PeriodType.MONTHLY])(
     "increments the %s streak immediately when the period is achieved",
     async (recurrenceType) => {
@@ -122,6 +160,7 @@ describe("GoalsService.achieve", () => {
     expect(challenges.recalculateProgress).toHaveBeenCalledWith(
       7,
       WorkType.GOALS,
+      expect.any(Object),
     );
     expect(processRepository.save.mock.invocationCallOrder[0]).toBeLessThan(
       challenges.recalculateProgress.mock.invocationCallOrder[0],
