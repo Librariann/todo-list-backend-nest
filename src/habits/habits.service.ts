@@ -203,7 +203,8 @@ export class HabitsService {
       streak = await this.streaks.save(streak);
 
       achievements =
-        (await this.challenges.record(userId, WorkType.HABITS)) ?? [];
+        (await this.challenges.recalculateProgress(userId, WorkType.HABITS)) ??
+        [];
     }
 
     return {

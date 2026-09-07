@@ -1,5 +1,6 @@
 import { describe, expect, it, jest } from "@jest/globals";
 import { PeriodType } from "../common/date";
+import { WorkType } from "../entities/challenge.entity";
 import { Goal, GoalProcess, GoalStreak } from "../entities/goal.entity";
 import { GoalsService } from "./goals.service";
 
@@ -57,7 +58,7 @@ function setup(entity: Goal, currentProcess: GoalProcess, currentStreak = 1) {
     save: jest.fn((value: GoalStreak) => Promise.resolve(value)),
   };
   const challenges = {
-    record: jest.fn(() => Promise.resolve([])),
+    recalculateProgress: jest.fn(() => Promise.resolve([])),
   };
   const service = new GoalsService(
     goalRepository as never,
@@ -66,7 +67,13 @@ function setup(entity: Goal, currentProcess: GoalProcess, currentStreak = 1) {
     challenges as never,
   );
 
-  return { service, streak, processRepository, streakRepository };
+  return {
+    service,
+    streak,
+    processRepository,
+    streakRepository,
+    challenges,
+  };
 }
 
 describe("GoalsService.achieve", () => {
@@ -99,6 +106,26 @@ describe("GoalsService.achieve", () => {
     expect(result.achieved).toBe(false);
     expect(streak.currentStreak).toBe(1);
     expect(streakRepository.save).not.toHaveBeenCalled();
+  });
+
+  it("saves the completed goal before recalculating challenge progress", async () => {
+    const entity = goal(PeriodType.DAILY);
+    const currentProcess = process(entity);
+    const { service, processRepository, challenges } = setup(
+      entity,
+      currentProcess,
+    );
+
+    await service.achieve(7, 9);
+
+    expect(processRepository.save).toHaveBeenCalledWith(currentProcess);
+    expect(challenges.recalculateProgress).toHaveBeenCalledWith(
+      7,
+      WorkType.GOALS,
+    );
+    expect(processRepository.save.mock.invocationCallOrder[0]).toBeLessThan(
+      challenges.recalculateProgress.mock.invocationCallOrder[0],
+    );
   });
 });
 

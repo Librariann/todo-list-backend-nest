@@ -386,16 +386,22 @@ export class GoalsService {
 
     currentGoals.currentCount += 1;
     let achievements: ChallengeAchievementOutput[] = [];
+    const newlyAchieved = currentGoals.currentCount >= goal.targetCount;
 
-    if (currentGoals.currentCount >= goal.targetCount) {
+    if (newlyAchieved) {
       currentGoals.isAchieved = true;
       currentGoals.achievedAt = new Date();
-      achievements =
-        (await this.challenges.record(userId, WorkType.GOALS)) ?? [];
     }
 
     await this.processes.save(currentGoals);
-    if (currentGoals.isAchieved) {
+
+    if (newlyAchieved) {
+      achievements =
+        (await this.challenges.recalculateProgress(userId, WorkType.GOALS)) ??
+        [];
+    }
+
+    if (newlyAchieved) {
       await this.updateStreak(userId, id, true);
     }
     currentGoals.goal = goal;
