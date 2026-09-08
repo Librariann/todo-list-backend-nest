@@ -25,16 +25,30 @@ describe("TodosService.status", () => {
   });
 
   function setup(entity: Todo) {
-    const save = jest.fn().mockImplementation((value) => Promise.resolve(value));
+    const save = jest
+      .fn()
+      .mockImplementation((value) => Promise.resolve(value));
     const repository = {
       findOne: jest.fn(() => Promise.resolve(entity)),
       save,
     };
     const manager = { getRepository: jest.fn().mockReturnValue(repository) };
-    const syncTodoProgress = jest.fn();
+    const syncTodoProgress = jest.fn(() =>
+      Promise.resolve([
+        {
+          challengeId: 1,
+          name: "할 일 도전",
+          description: "할 일을 완료해요",
+          point: 30,
+          periodType: "DAILY",
+          periodKey: "2026-08-24",
+        },
+      ]),
+    );
     const dataSource = {
-      transaction: jest.fn((callback: (value: typeof manager) => Promise<void>) =>
-        callback(manager),
+      transaction: jest.fn(
+        (callback: (value: typeof manager) => Promise<void>) =>
+          callback(manager),
       ),
     };
     const service = new TodosService(
@@ -50,11 +64,12 @@ describe("TodosService.status", () => {
     const entity = todo();
     const { service, manager, save, syncTodoProgress } = setup(entity);
 
-    await service.status(7, 5, TodoStatus.DONE);
+    const result = await service.status(7, 5, TodoStatus.DONE);
 
     expect(entity.status).toBe(TodoStatus.DONE);
     expect(save).toHaveBeenCalledWith(entity);
     expect(syncTodoProgress).toHaveBeenCalledWith(7, manager);
+    expect(result.achievements).toHaveLength(1);
   });
 
   it("syncs challenge progress when completion is cancelled", async () => {
@@ -76,7 +91,9 @@ describe("TodosService.status", () => {
   });
 
   it("rejects completing a future todo", async () => {
-    const { service, save, syncTodoProgress } = setup(todo(TodoStatus.READY, "2026-08-25"));
+    const { service, save, syncTodoProgress } = setup(
+      todo(TodoStatus.READY, "2026-08-25"),
+    );
 
     await expect(service.status(7, 5, TodoStatus.DONE)).rejects.toBeInstanceOf(
       BadRequestException,

@@ -109,7 +109,9 @@ export class AuthController {
     return res.redirect(this.oauth.authorizationUrl(provider, state));
   }
 
-  @Public() @Get("api/auth/mobile/oauth/authorize/google") mobileGoogleAuthorize(
+  @Public()
+  @Get("api/auth/mobile/oauth/authorize/google")
+  mobileGoogleAuthorize(
     @Query("code_challenge") codeChallenge: string,
     @Res() res: Response,
   ) {
@@ -131,7 +133,9 @@ export class AuthController {
     return res.redirect(this.oauth.authorizationUrl("google", state));
   }
 
-  @Public() @Get("login/oauth2/code/:provider") async callback(
+  @Public()
+  @Get("login/oauth2/code/:provider")
+  async callback(
     @Param("provider") provider: string,
     @Query("code") code: string,
     @Query("state") state: string,
@@ -171,7 +175,9 @@ export class AuthController {
     }
   }
 
-  @Public() @Post("api/auth/oauth/exchange") async exchange(
+  @Public()
+  @Post("api/auth/oauth/exchange")
+  async exchange(
     @Body() dto: OAuthExchangeDto,
     @Res({ passthrough: true }) res: Response,
   ) {
@@ -194,18 +200,16 @@ export class AuthController {
     return success(data, "OAuth 로그인이 완료되었습니다.");
   }
 
-  @Public() @Post("api/auth/mobile/oauth/exchange") async mobileExchange(
-    @Body() dto: OAuthExchangeDto,
-  ) {
+  @Public()
+  @Post("api/auth/mobile/oauth/exchange")
+  async mobileExchange(@Body() dto: OAuthExchangeDto) {
     const userId = await this.handoff.consume(dto.code, dto.codeVerifier);
     const result = await this.auth.issueByUserId(userId);
     return success(result, "모바일 OAuth 로그인이 완료되었습니다.");
   }
 
-  @Post("api/auth/mobile/web-handoff") async issueWebHandoff(
-    @Body() dto: WebHandoffDto,
-    @CurrentUser() user: User,
-  ) {
+  @Post("api/auth/mobile/web-handoff")
+  async issueWebHandoff(@Body() dto: WebHandoffDto, @CurrentUser() user: User) {
     const code = await this.handoff.issue(user.id, dto.codeChallenge);
     return success(
       { code, expiresIn: 60 },

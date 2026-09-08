@@ -16,6 +16,7 @@ import { CreateHabitDto } from "./dto/create-habits.dto";
 import { UpdateHabitDto } from "./dto/update-habits.dto";
 import {
   HabitHistoryOutput,
+  HabitIncrementOutput,
   HabitOutput,
   HabitsService,
 } from "./habits.service";
@@ -61,11 +62,11 @@ export class HabitsController {
   async increment(
     @Param("id", ParseIntPipe) id: number,
     @CurrentUser() user: User,
-  ): Promise<ApiResponse<HabitOutput>> {
+  ): Promise<ApiResponse<HabitIncrementOutput>> {
     const result = await this.service.increment(user.id, id);
     return success(
       result,
-      result.todayAchieved ? "목표 달성!" : "카운터 증가 성공",
+      result.habit.todayAchieved ? "목표 달성!" : "카운터 증가 성공",
     );
   }
 

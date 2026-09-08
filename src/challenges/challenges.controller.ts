@@ -18,6 +18,7 @@ import { PeriodType } from "../common/date";
 import { WorkType } from "../entities/challenge.entity";
 import { User, UserRole } from "../entities/user.entity";
 import {
+  ChallengeAchievementOutput,
   ChallengeOutput,
   ChallengeProgressOutput,
   ChallengeRotationPreviewOutput,
@@ -166,8 +167,8 @@ export class UserChallengesController {
   async progress(
     @CurrentUser() user: User,
     @Body("workType") workType: WorkType,
-  ): Promise<ApiResponse<null>> {
-    await this.service.record(user.id, workType);
-    return success(null, "도전과제 진행상황이 업데이트되었습니다.");
+  ): Promise<ApiResponse<ChallengeAchievementOutput[]>> {
+    const result = await this.service.record(user.id, workType);
+    return success(result, "도전과제 진행상황이 업데이트되었습니다.");
   }
 }

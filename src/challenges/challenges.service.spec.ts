@@ -255,7 +255,7 @@ describe("ChallengesService.syncTodoProgress", () => {
       pending,
     );
 
-    await service.syncTodoProgress(7);
+    const achievements = await service.syncTodoProgress(7);
 
     expect(progressEntity.isAchieved).toBe(true);
     expect(awardChallenge).toHaveBeenCalledWith(
@@ -266,6 +266,16 @@ describe("ChallengesService.syncTodoProgress", () => {
       undefined,
       "2026-08-24",
     );
+    expect(achievements).toEqual([
+      {
+        challengeId: 1,
+        name: "할 일 도전",
+        description: "할 일을 완료해요",
+        point: 30,
+        periodType: PeriodType.DAILY,
+        periodKey: "2026-08-24",
+      },
+    ]);
   });
 
   it("does not create an empty progress row", async () => {

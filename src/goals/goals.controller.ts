@@ -12,6 +12,7 @@ import { CurrentUser } from "../auth/current-user.decorator";
 import { ApiResponse, success } from "../common/api-response";
 import { User } from "../entities/user.entity";
 import {
+  GoalAchievementOutput,
   GoalDashboardOutput,
   GoalDateOutput,
   GoalOutput,
@@ -98,10 +99,10 @@ export class GoalsController {
   async achieve(
     @Param("id", ParseIntPipe) id: number,
     @CurrentUser() user: User,
-  ): Promise<ApiResponse<GoalProcessOutput>> {
+  ): Promise<ApiResponse<GoalAchievementOutput>> {
     const result = await this.service.achieve(user.id, id);
     return success(
-      result.data,
+      result,
       result.achieved
         ? "목표 달성 완료! 포인트가 지급되었습니다."
         : "목표 진행도가 업데이트되었습니다.",

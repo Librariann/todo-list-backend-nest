@@ -6,7 +6,10 @@ import {
 } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { DataSource, Repository } from "typeorm";
-import { ChallengesService } from "../challenges/challenges.service";
+import {
+  ChallengeAchievementOutput,
+  ChallengesService,
+} from "../challenges/challenges.service";
 import { today } from "../common/date";
 import { Todo, TodoStatus } from "../entities/todo.entity";
 import type { CreateTodoDto } from "./dto/create-todos.dto";
@@ -22,6 +25,10 @@ export interface TodoOutput {
   status: TodoStatus;
   orderIndex: number;
   targetDate: string;
+}
+
+export interface TodoStatusOutput {
+  achievements: ChallengeAchievementOutput[];
 }
 
 function todoResponse(todo: Todo): TodoOutput {
@@ -48,7 +55,7 @@ export class TodosService {
   async list(userId: number, targetDate: string): Promise<TodoOutput[]> {
     const todos = await this.todos.find({
       where: { userId, targetDate },
-      order: { orderIndex: "ASC" },
+      order: { orderIndex: "DESC" },
     });
 
     return todos.map(todoResponse);
@@ -107,7 +114,13 @@ export class TodosService {
   }
 
   //TODO: 추후 고민필요.. 완료된 할 일 상태 변경이 안된다..?
-  async status(userId: number, id: number, status: TodoStatus): Promise<void> {
+  async status(
+    userId: number,
+    id: number,
+    status: TodoStatus,
+  ): Promise<TodoStatusOutput> {
+    let achievements: ChallengeAchievementOutput[] = [];
+
     await this.dataSource.transaction(async (manager) => {
       const todos = manager.getRepository(Todo);
       const todo = await todos.findOne({
@@ -135,9 +148,12 @@ export class TodosService {
       await todos.save(todo);
 
       if (completionChanged) {
-        await this.challenges.syncTodoProgress(userId, manager);
+        achievements =
+          (await this.challenges.syncTodoProgress(userId, manager)) ?? [];
       }
     });
+
+    return { achievements };
   }
 
   async reorder(userId: number, dto: ReorderTodoDto): Promise<void> {

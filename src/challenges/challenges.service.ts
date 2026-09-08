@@ -61,6 +61,15 @@ export interface ChallengeProgressOutput extends ChallengeOutput {
   periodKey: string;
 }
 
+export interface ChallengeAchievementOutput {
+  challengeId: number;
+  name: string;
+  description: string | null;
+  point: number;
+  periodType: PeriodType;
+  periodKey: string;
+}
+
 export interface ChallengeRotationSettingOutput {
   periodType: PeriodType;
   selectionCount: number;
@@ -206,7 +215,8 @@ export class ChallengesService {
     type: PeriodType,
     manager?: EntityManager,
   ): Promise<ChallengeRotationSettingOutput> {
-    const repository = manager?.getRepository(ChallengeRotationSetting) ??
+    const repository =
+      manager?.getRepository(ChallengeRotationSetting) ??
       this.rotationSettingRepository;
     const setting = await repository.findOneBy({
       periodType: type,
@@ -522,7 +532,9 @@ export class ChallengesService {
           selectedChallenges: [],
           actorUserId,
           message:
-            error instanceof Error ? error.message.slice(0, 500) : "알 수 없는 오류",
+            error instanceof Error
+              ? error.message.slice(0, 500)
+              : "알 수 없는 오류",
         }),
       );
     } catch {
@@ -624,20 +636,27 @@ export class ChallengesService {
         let selected: Challenge[];
         if (selectedChallengeIds) {
           const setting = await this.rotationSetting(periodType, manager);
-          const activeCandidates = await manager.getRepository(Challenge).findBy({
-            recurrenceType: periodType,
-            isActive: true,
-          });
+          const activeCandidates = await manager
+            .getRepository(Challenge)
+            .findBy({
+              recurrenceType: periodType,
+              isActive: true,
+            });
           const expectedCount = Math.min(
             setting.selectionCount,
             activeCandidates.length,
           );
           const candidateMap = new Map(
-            activeCandidates.map((candidate) => [Number(candidate.id), candidate]),
+            activeCandidates.map((candidate) => [
+              Number(candidate.id),
+              candidate,
+            ]),
           );
           selected = selectedChallengeIds
             .map((id) => candidateMap.get(Number(id)))
-            .filter((candidate): candidate is Challenge => candidate !== undefined);
+            .filter(
+              (candidate): candidate is Challenge => candidate !== undefined,
+            );
           selectionCount = setting.selectionCount;
 
           if (
@@ -824,8 +843,13 @@ export class ChallengesService {
     return result;
   }
 
-  async record(userId: number, workType: WorkType): Promise<void> {
+  async record(
+    userId: number,
+    workType: WorkType,
+  ): Promise<ChallengeAchievementOutput[]> {
     const items = await this.currentAssignments(workType);
+    const achievements: ChallengeAchievementOutput[] = [];
+
     for (const assignment of items) {
       const key = assignment.periodKey;
       let progress = await this.progresses.findOne({
@@ -878,20 +902,31 @@ export class ChallengesService {
           undefined,
           key,
         );
+        achievements.push({
+          challengeId: Number(assignment.challengeId),
+          name: assignment.name,
+          description: assignment.description,
+          point: assignment.point,
+          periodType: assignment.periodType,
+          periodKey: key,
+        });
       }
 
       await this.progresses.save(progress);
     }
+
+    return achievements;
   }
 
   async syncTodoProgress(
     userId: number,
     manager?: EntityManager,
-  ): Promise<void> {
+  ): Promise<ChallengeAchievementOutput[]> {
     const progresses =
       manager?.getRepository(UserProgressChallenge) ?? this.progresses;
     const todos = manager?.getRepository(Todo) ?? this.todos;
     const items = await this.currentAssignments(WorkType.TODOS);
+    const achievements: ChallengeAchievementOutput[] = [];
 
     for (const assignment of items) {
       const key = assignment.periodKey;
@@ -961,6 +996,14 @@ export class ChallengesService {
           manager,
           key,
         );
+        achievements.push({
+          challengeId: Number(assignment.challengeId),
+          name: assignment.name,
+          description: assignment.description,
+          point: assignment.point,
+          periodType: assignment.periodType,
+          periodKey: key,
+        });
       } else if (wasAchieved && !isAchieved) {
         await this.points.revokeChallenge(
           userId,
@@ -973,5 +1016,7 @@ export class ChallengesService {
 
       await progresses.save(progress);
     }
+
+    return achievements;
   }
 }

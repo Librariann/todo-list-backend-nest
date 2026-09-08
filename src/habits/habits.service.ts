@@ -7,7 +7,10 @@ import {
 import { Cron } from "@nestjs/schedule";
 import { InjectRepository } from "@nestjs/typeorm";
 import { Between, Repository } from "typeorm";
-import { ChallengesService } from "../challenges/challenges.service";
+import {
+  ChallengeAchievementOutput,
+  ChallengesService,
+} from "../challenges/challenges.service";
 import { WorkType } from "../entities/challenge.entity";
 import { Habit, HabitLog, HabitStreak } from "../entities/habit.entity";
 import { today } from "../common/date";
@@ -34,6 +37,11 @@ export interface HabitHistoryOutput {
   logDate: string;
   currentCount: number;
   isAchieved: boolean;
+}
+
+export interface HabitIncrementOutput {
+  habit: HabitOutput;
+  achievements: ChallengeAchievementOutput[];
 }
 
 function response(
@@ -145,7 +153,7 @@ export class HabitsService {
     getHabits.isActive = false;
     await this.habits.save(getHabits);
   }
-  async increment(userId: number, id: number): Promise<HabitOutput> {
+  async increment(userId: number, id: number): Promise<HabitIncrementOutput> {
     const getHabits = await this.owned(userId, id);
     let log = await this.logs.findOneBy({
       habitId: id,
@@ -166,6 +174,8 @@ export class HabitsService {
     const newlyAchieved =
       !log.isAchieved && log.currentCount + 1 >= getHabits.dailyTarget;
     log.currentCount += 1;
+
+    let achievements: ChallengeAchievementOutput[] = [];
 
     if (newlyAchieved) {
       log.isAchieved = true;
@@ -192,10 +202,14 @@ export class HabitsService {
       );
       streak = await this.streaks.save(streak);
 
-      await this.challenges.record(userId, WorkType.HABITS);
+      achievements =
+        (await this.challenges.record(userId, WorkType.HABITS)) ?? [];
     }
 
-    return response(getHabits, log, streak);
+    return {
+      habit: response(getHabits, log, streak),
+      achievements,
+    };
   }
 
   // 습관 카운터 감소

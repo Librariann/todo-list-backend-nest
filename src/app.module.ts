@@ -10,6 +10,7 @@ import { ChallengesModule } from "./challenges/challenges.module";
 import { GoalsModule } from "./goals/goals.module";
 import { HabitsModule } from "./habits/habits.module";
 import { PointsModule } from "./points/points.module";
+import { PushModule } from "./push/push.module";
 import { RewardsModule } from "./rewards/rewards.module";
 import { SummaryModule } from "./summary/summary.module";
 import { TodosModule } from "./todos/todos.module";
@@ -38,6 +39,7 @@ import { UsersModule } from "./users/users.module";
     AuthModule,
     UsersModule,
     PointsModule,
+    PushModule,
     ChallengesModule,
     TodosModule,
     HabitsModule,

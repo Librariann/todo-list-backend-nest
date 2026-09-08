@@ -15,7 +15,7 @@ import { User } from "../entities/user.entity";
 import { CreateTodoDto } from "./dto/create-todos.dto";
 import { ReorderTodoDto } from "./dto/reorder-todos.dto";
 import { UpdateTodoDto } from "./dto/update-todos.dto";
-import { TodoOutput, TodosService } from "./todos.service";
+import { TodoOutput, TodoStatusOutput, TodosService } from "./todos.service";
 
 @Controller("api/todos")
 export class TodosController {
@@ -52,9 +52,9 @@ export class TodosController {
     @Param("id", ParseIntPipe) id: number,
     @Param("status") status: TodoStatus,
     @CurrentUser() user: User,
-  ): Promise<ApiResponse<null>> {
-    await this.service.status(user.id, id, status);
-    return success(null, "할 일 상태가 성공적으로 수정 완료되었습니다.");
+  ): Promise<ApiResponse<TodoStatusOutput>> {
+    const result = await this.service.status(user.id, id, status);
+    return success(result, "할 일 상태가 성공적으로 수정 완료되었습니다.");
   }
 
   @Patch(":id")

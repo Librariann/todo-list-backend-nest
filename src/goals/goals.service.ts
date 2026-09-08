@@ -13,7 +13,10 @@ import {
   MoreThanOrEqual,
   Repository,
 } from "typeorm";
-import { ChallengesService } from "../challenges/challenges.service";
+import {
+  ChallengeAchievementOutput,
+  ChallengesService,
+} from "../challenges/challenges.service";
 import {
   goalPeriodEnd,
   goalPeriodForDate,
@@ -70,6 +73,7 @@ export interface GoalStreakOutput {
 export interface GoalAchievementOutput {
   data: GoalProcessOutput;
   achieved: boolean;
+  achievements: ChallengeAchievementOutput[];
 }
 
 export type GoalPeriodStatus = "ACTIVE" | "ACHIEVED" | "MISSED" | "UPCOMING";
@@ -353,7 +357,9 @@ export class GoalsService {
     if (currentGoals) {
       currentGoals.isFinalized = true;
       await this.processes.save(currentGoals);
-      await this.updateStreak(userId, id, currentGoals.isAchieved);
+      if (!currentGoals.isAchieved) {
+        await this.updateStreak(userId, id, false);
+      }
     }
   }
   async achieve(userId: number, id: number): Promise<GoalAchievementOutput> {
@@ -379,19 +385,25 @@ export class GoalsService {
     }
 
     currentGoals.currentCount += 1;
+    let achievements: ChallengeAchievementOutput[] = [];
 
     if (currentGoals.currentCount >= goal.targetCount) {
       currentGoals.isAchieved = true;
       currentGoals.achievedAt = new Date();
-      await this.challenges.record(userId, WorkType.GOALS);
+      achievements =
+        (await this.challenges.record(userId, WorkType.GOALS)) ?? [];
     }
 
     await this.processes.save(currentGoals);
+    if (currentGoals.isAchieved) {
+      await this.updateStreak(userId, id, true);
+    }
     currentGoals.goal = goal;
 
     return {
       data: processResponse(currentGoals),
       achieved: currentGoals.isAchieved,
+      achievements,
     };
   }
   async progress(
@@ -484,7 +496,8 @@ export class GoalsService {
     await this.streaks.save(streak);
   }
 
-  @Cron("0 0 0 * * *", { timeZone: "Asia/Seoul" })
+  // 매시간 10분에 만료된 목표 기간을 마감하고 다음 기간을 준비
+  @Cron("0 10 * * * *", { timeZone: "Asia/Seoul" })
   async resetExpired(): Promise<void> {
     for (const process of await this.processes.find({
       where: { isFinalized: false, periodEnd: LessThan(today()) },
@@ -493,11 +506,9 @@ export class GoalsService {
       process.isFinalized = true;
 
       await this.processes.save(process);
-      await this.updateStreak(
-        process.userId,
-        process.goalId,
-        process.isAchieved,
-      );
+      if (!process.isAchieved) {
+        await this.updateStreak(process.userId, process.goalId, false);
+      }
 
       if (process.goal.isActive) {
         let nextIndex = process.periodIndex + 1;
