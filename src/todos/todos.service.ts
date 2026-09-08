@@ -100,13 +100,24 @@ export class TodosService {
     dto: UpdateTodoDto,
   ): Promise<TodoOutput> {
     const todo = await this.owned(userId, id);
-    const existsTodos = await this.todos
-      .createQueryBuilder("t")
-      .where("t.name = :name AND t.id != :id", { name: dto.name, id })
-      .getExists();
 
-    if (dto.name && existsTodos) {
-      throw new ConflictException(`이미 사용중인 할 일명 입니다: ${dto.name}`);
+    if (dto.name) {
+      const duplicated = await this.todos
+        .createQueryBuilder("t")
+        .where(
+          "t.name = :name AND t.user_id = :userId AND t.target_date = :targetDate AND t.id != :id",
+          {
+            name: dto.name,
+            userId,
+            targetDate: dto.targetDate ?? todo.targetDate,
+            id,
+          },
+        )
+        .getExists();
+
+      if (duplicated) {
+        throw new ConflictException(`이미 사용중인 할 일명 입니다: ${dto.name}`);
+      }
     }
 
     Object.assign(todo, dto);

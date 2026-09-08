@@ -86,6 +86,21 @@ export class SessionService implements OnModuleDestroy {
     this.memory.delete(id);
   }
 
+  async invalidateAllForUser(userId: number): Promise<void> {
+    if (this.redis) {
+      try {
+        if (this.redis.status === "wait") await this.redis.connect();
+        const sessionId = await this.redis.get(`user:session:${userId}`);
+        if (sessionId) await this.redis.del(`session:${sessionId}`);
+        await this.redis.del(`user:session:${userId}`);
+      } catch {}
+    }
+
+    for (const [id, data] of this.memory) {
+      if (data.userId === userId) this.memory.delete(id);
+    }
+  }
+
   async onModuleDestroy(): Promise<void> {
     if (this.redis?.status === "ready") await this.redis.quit();
   }

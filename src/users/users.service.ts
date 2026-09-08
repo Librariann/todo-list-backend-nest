@@ -6,7 +6,11 @@ import {
 } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import * as bcrypt from "bcrypt";
-import { Repository } from "typeorm";
+import { DataSource, Repository } from "typeorm";
+import { UserProgressChallenge } from "../entities/challenge.entity";
+import { Goal, GoalProcess, GoalStreak } from "../entities/goal.entity";
+import { Habit, HabitLog, HabitStreak } from "../entities/habit.entity";
+import { Todo } from "../entities/todo.entity";
 import { PointAction, UserPoint } from "../entities/user-point.entity";
 import { RewardType, UserReward } from "../entities/reward.entity";
 import { User, UserRole, UserStatus } from "../entities/user.entity";
@@ -62,7 +66,39 @@ export class UsersService {
     private readonly points: Repository<UserPoint>,
     @InjectRepository(UserReward)
     private readonly userRewards: Repository<UserReward>,
+    private readonly dataSource: DataSource,
   ) {}
+
+  /**
+   * 계정과 사용자에 속한 모든 데이터를 영구 삭제한다.
+   * push_devices와 push_deliveries는 FK onDelete CASCADE로 함께 지워진다.
+   */
+  async deleteMe(userId: number): Promise<void> {
+    await this.dataSource.transaction(async (manager) => {
+      const user = await manager.findOneBy(User, { id: userId });
+      if (!user) {
+        throw new NotFoundException(`사용자를 찾을 수 없습니다: ${userId}`);
+      }
+
+      // 자식 테이블을 먼저 지운다. (habit_logs/goal_process 등이 상위 행을 참조)
+      for (const entity of [
+        Todo,
+        HabitLog,
+        HabitStreak,
+        Habit,
+        GoalProcess,
+        GoalStreak,
+        Goal,
+        UserProgressChallenge,
+        UserReward,
+        UserPoint,
+      ]) {
+        await manager.delete(entity, { userId });
+      }
+
+      await manager.delete(User, { id: userId });
+    });
+  }
   async register(dto: RegisterDto): Promise<UserOutput> {
     if (dto.password !== dto.confirmPassword) {
       throw new BadRequestException(

@@ -28,6 +28,7 @@ import {
 import { WorkType } from "../entities/challenge.entity";
 import { Goal, GoalProcess, GoalStreak } from "../entities/goal.entity";
 import type { CreateGoalDto } from "./dto/create-goals.dto";
+import type { UpdateGoalDto } from "./dto/update-goals.dto";
 
 export interface GoalOutput {
   id: number;
@@ -176,7 +177,6 @@ export class GoalsService {
     private readonly challenges: ChallengesService,
   ) {}
 
-  //Create Goals
   async create(userId: number, dto: CreateGoalDto): Promise<GoalOutput> {
     if (dto.startDate < today()) {
       throw new BadRequestException("지난 날짜에는 목표를 생성할 수 없습니다.");
@@ -231,7 +231,6 @@ export class GoalsService {
     return goalResponse(goal);
   }
 
-  //Get Goals List
   async list(userId: number): Promise<GoalOutput[]> {
     const getFindLists = await this.goals.find({
       where: { userId, isActive: true },
@@ -327,17 +326,20 @@ export class GoalsService {
     });
   }
 
+  /**
+   * 이름만 수정한다. 주기·시작일·목표 횟수는 goal_process의 기간 계산 기준이라
+   * 진행 기록이 쌓인 뒤 바꾸면 과거 기록과 어긋나므로 변경 대상에서 제외함
+   */
   async update(
     userId: number,
     id: number,
-    dto: CreateGoalDto,
+    dto: UpdateGoalDto,
   ): Promise<GoalOutput> {
     const goal = await this.owned(userId, id);
     const exists = await this.goals.exists({
       where: { userId, name: dto.name, isActive: true },
     });
 
-    //받은 데이터의 이름이 기존 목표 이름과 다르고, 동일한 이름의 활성화된 목표가 존재하면 충돌 예외 발생
     if (dto.name !== goal.name && exists) {
       throw new ConflictException(
         `이미 동일한 이름의 활성 목표가 존재합니다: ${dto.name}`,
@@ -345,8 +347,6 @@ export class GoalsService {
     }
 
     goal.name = dto.name;
-    goal.description = dto.description ?? null;
-    goal.targetCount = dto.targetCount;
     return goalResponse(await this.goals.save(goal));
   }
   async deactivate(userId: number, id: number): Promise<void> {
@@ -486,7 +486,6 @@ export class GoalsService {
   ): Promise<void> {
     const streak = await this.streaks.findOneBy({ userId, goalId });
 
-    //streak이 존재하지 않으면 아무 작업도 수행하지 않고 종료
     if (!streak) {
       return;
     }

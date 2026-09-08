@@ -110,8 +110,9 @@ export class AuthController {
   }
 
   @Public()
-  @Get("api/auth/mobile/oauth/authorize/google")
-  mobileGoogleAuthorize(
+  @Get("api/auth/mobile/oauth/authorize/:provider")
+  mobileOAuthAuthorize(
+    @Param("provider") provider: string,
     @Query("code_challenge") codeChallenge: string,
     @Res() res: Response,
   ) {
@@ -130,7 +131,7 @@ export class AuthController {
     res.cookie("oauth2_state", state, cookieOptions);
     res.cookie("oauth_pkce_challenge", codeChallenge, cookieOptions);
     res.cookie(MOBILE_OAUTH_CLIENT_COOKIE, "true", cookieOptions);
-    return res.redirect(this.oauth.authorizationUrl("google", state));
+    return res.redirect(this.oauth.authorizationUrl(provider, state));
   }
 
   @Public()

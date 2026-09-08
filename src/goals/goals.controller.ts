@@ -5,8 +5,8 @@ import {
   Get,
   Param,
   ParseIntPipe,
+  Patch,
   Post,
-  Put,
 } from "@nestjs/common";
 import { CurrentUser } from "../auth/current-user.decorator";
 import { ApiResponse, success } from "../common/api-response";
@@ -21,6 +21,7 @@ import {
   GoalStreakOutput,
 } from "./goals.service";
 import { CreateGoalDto } from "./dto/create-goals.dto";
+import { UpdateGoalDto } from "./dto/update-goals.dto";
 
 @Controller("api/goals")
 export class GoalsController {
@@ -85,10 +86,10 @@ export class GoalsController {
     return success(result, "목표 생성 성공");
   }
 
-  @Put(":id")
+  @Patch(":id")
   async update(
     @Param("id", ParseIntPipe) id: number,
-    @Body() dto: CreateGoalDto,
+    @Body() dto: UpdateGoalDto,
     @CurrentUser() user: User,
   ): Promise<ApiResponse<GoalOutput>> {
     const result = await this.service.update(user.id, id, dto);

@@ -1,12 +1,16 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseIntPipe,
   Patch,
   Post,
+  Res,
 } from "@nestjs/common";
+import type { Response } from "express";
+import { SessionService } from "../auth/session.service";
 import { CurrentUser } from "../auth/current-user.decorator";
 import { Public } from "../auth/public.decorator";
 import { Roles } from "../auth/roles.decorator";
@@ -23,7 +27,10 @@ import {
 
 @Controller("api/users")
 export class UsersController {
-  constructor(private readonly service: UsersService) {}
+  constructor(
+    private readonly service: UsersService,
+    private readonly sessions: SessionService,
+  ) {}
 
   @Public()
   @Post("register")
@@ -74,6 +81,17 @@ export class UsersController {
   ): Promise<ApiResponse<UserOutput>> {
     const result = await this.service.updateMe(user.id, dto);
     return success(result, "내 정보가 수정되었습니다.");
+  }
+
+  @Delete("me")
+  async deleteMe(
+    @CurrentUser() user: User,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<ApiResponse<string>> {
+    await this.service.deleteMe(user.id);
+    await this.sessions.invalidateAllForUser(user.id);
+    res.clearCookie("refresh_token", { path: "/api/auth" });
+    return success("계정이 삭제되었습니다.", "회원 탈퇴가 완료되었습니다.");
   }
 
   @Get("active")
