@@ -11,6 +11,7 @@ import {
   ChallengesService,
 } from "../challenges/challenges.service";
 import { today } from "../common/date";
+import { WorkType } from "../entities/challenge.entity";
 import { Todo, TodoStatus } from "../entities/todo.entity";
 import type { CreateTodoDto } from "./dto/create-todos.dto";
 import type { ReorderTodoDto } from "./dto/reorder-todos.dto";
@@ -160,7 +161,11 @@ export class TodosService {
 
       if (completionChanged) {
         achievements =
-          (await this.challenges.syncTodoProgress(userId, manager)) ?? [];
+          (await this.challenges.recalculateProgress(
+            userId,
+            WorkType.TODOS,
+            manager,
+          )) ?? [];
       }
     });
 

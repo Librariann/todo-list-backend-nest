@@ -40,7 +40,7 @@ export class PushTestController {
       title: "GrowDo 테스트 알림",
       body: "Nest에서 보낸 푸시 알림이 정상적으로 도착했어요 🔔",
       type: "TEST",
-      data: { sentAt: new Date().toISOString() },
+      data: { screen: "todos", sentAt: new Date().toISOString() },
     });
     return success(result, "테스트 푸시 발송을 요청했습니다.");
   }
