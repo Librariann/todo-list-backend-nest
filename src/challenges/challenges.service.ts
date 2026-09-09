@@ -38,6 +38,12 @@ const DEFAULT_ROTATION_SETTINGS: Record<
   [PeriodType.MONTHLY]: { selectionCount: 5, cooldownPeriods: 2 },
 };
 
+const PERIOD_LABEL: Record<PeriodType, string> = {
+  [PeriodType.DAILY]: "일일",
+  [PeriodType.WEEKLY]: "주간",
+  [PeriodType.MONTHLY]: "월간",
+};
+
 export interface ChallengeOutput {
   id: number;
   createdAt: Date;
@@ -759,10 +765,19 @@ export class ChallengesService {
   }
 
   async create(dto: CreateChallengeDto): Promise<ChallengeOutput> {
-    const exists = await this.challenges.exists({ where: { name: dto.name } });
-    if (exists) {
+    const existing = await this.challenges.findOne({
+      where: { name: dto.name },
+    });
+    if (existing?.isActive) {
       throw new ConflictException(
         `이미 사용중인 도전과제명 입니다: ${dto.name}`,
+      );
+    }
+    if (existing) {
+      // 이름은 전체 기준으로 유일하지만 관리자 화면의 사용 중지 목록은 주기별로 나뉘어 있어,
+      // 어느 주기를 열어야 하는지 알려주지 않으면 안내대로 가도 항목을 찾지 못한다.
+      throw new ConflictException(
+        `사용 중지된 도전과제명입니다. ${PERIOD_LABEL[existing.recurrenceType]} 사용 중지 목록에서 다시 사용해주세요: ${dto.name}`,
       );
     }
 

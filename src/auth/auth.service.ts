@@ -114,6 +114,7 @@ export class AuthService {
     providerId: string,
     email: string,
     name: string,
+    providerRefreshToken?: string,
   ): Promise<User> {
     let user = await this.users.findOne({
       where: [{ provider, providerId }, { email }],
@@ -126,12 +127,17 @@ export class AuthService {
         password: await bcrypt.hash(crypto.randomUUID(), 12),
         provider,
         providerId,
+        appleRefreshToken:
+          provider === "apple" ? providerRefreshToken : undefined,
         status: UserStatus.ACTIVE,
         role: UserRole.USER,
       });
     } else {
       user.provider = provider;
       user.providerId = providerId;
+      if (provider === "apple" && providerRefreshToken) {
+        user.appleRefreshToken = providerRefreshToken;
+      }
       if (!user.name) user.name = name;
     }
     return this.users.save(user);

@@ -4,6 +4,7 @@ import { JwtModule } from "@nestjs/jwt";
 import { TypeOrmModule } from "@nestjs/typeorm";
 import { User } from "../entities/user.entity";
 import { AuthController } from "./auth.controller";
+import { AppleAuthService } from "./apple-auth.service";
 import { AuthService } from "./auth.service";
 import { JwtAuthGuard } from "./jwt-auth.guard";
 import { OAuthService } from "./oauth.service";
@@ -27,6 +28,7 @@ import { SessionService } from "./session.service";
   controllers: [AuthController],
   providers: [
     AuthService,
+    AppleAuthService,
     OAuthService,
     OAuthHandoffService,
     SessionService,

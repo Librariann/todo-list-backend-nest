@@ -35,6 +35,14 @@ export class User extends BaseEntity {
   @Column({ name: "provider_id", type: "varchar", nullable: true, length: 255 })
   providerId: string | null;
 
+  @Column({
+    name: "apple_refresh_token",
+    type: "text",
+    nullable: true,
+    select: false,
+  })
+  appleRefreshToken: string | null;
+
   @Column({ type: "enum", enum: UserStatus, default: UserStatus.ACTIVE })
   status: UserStatus;
 

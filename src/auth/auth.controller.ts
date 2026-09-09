@@ -15,6 +15,7 @@ import type { Request, Response } from "express";
 import { success } from "../common/api-response";
 import { User } from "../entities/user.entity";
 import { AuthService } from "./auth.service";
+import { AppleAuthService } from "./apple-auth.service";
 import { CurrentUser } from "./current-user.decorator";
 import { OAuthHandoffService } from "./oauth-handoff.service";
 import { OAuthService } from "./oauth.service";
@@ -39,16 +40,39 @@ class OAuthExchangeDto {
 class WebHandoffDto {
   @IsString() @IsNotEmpty() codeChallenge: string;
 }
+class AppleLoginDto {
+  @IsString() @IsNotEmpty() identityToken: string;
+  @IsString() @IsNotEmpty() authorizationCode: string;
+  @IsString() @IsNotEmpty() nonce: string;
+  @IsOptional() @IsString() fullName?: string;
+}
+class AppleOAuthCallbackDto {
+  @IsOptional() @IsString() code?: string;
+  @IsOptional() @IsString() state?: string;
+  @IsOptional() @IsString() user?: string;
+  @IsOptional() @IsString() error?: string;
+}
 
 const MOBILE_OAUTH_CLIENT_COOKIE = "oauth_client_mobile";
+const APPLE_OAUTH_NONCE_COOKIE = "oauth_apple_nonce";
 
 @Controller()
 export class AuthController {
   constructor(
     private readonly auth: AuthService,
+    private readonly appleAuth: AppleAuthService,
     private readonly oauth: OAuthService,
     private readonly handoff: OAuthHandoffService,
   ) {}
+  @Public()
+  @Post("api/auth/mobile/apple")
+  async mobileAppleLogin(@Body() dto: AppleLoginDto) {
+    const user = await this.appleAuth.authenticate(dto);
+    return success(
+      await this.auth.issueByUserId(user.id),
+      "Apple 로그인이 완료되었습니다.",
+    );
+  }
   @Public() @Post("api/auth/login") async login(@Body() dto: LoginDto) {
     return success(
       await this.auth.login(dto.email, dto.password),
@@ -94,19 +118,22 @@ export class AuthController {
       );
     }
     const state = this.oauth.state();
-    res.cookie("oauth2_state", state, {
+    const isApple = provider === "apple";
+    const nonce = isApple ? this.oauth.state() : undefined;
+    const cookieOptions = {
       httpOnly: true,
-      secure: process.env.COOKIE_SECURE === "true",
-      sameSite: cookieSameSite(),
+      secure: isApple || process.env.COOKIE_SECURE === "true",
+      sameSite: isApple ? ("none" as const) : cookieSameSite(),
       maxAge: 300000,
-    });
-    res.cookie("oauth_pkce_challenge", codeChallenge, {
-      httpOnly: true,
-      secure: process.env.COOKIE_SECURE === "true",
-      sameSite: cookieSameSite(),
-      maxAge: 300000,
-    });
-    return res.redirect(this.oauth.authorizationUrl(provider, state));
+    } as const;
+    res.cookie("oauth2_state", state, cookieOptions);
+    res.cookie("oauth_pkce_challenge", codeChallenge, cookieOptions);
+    if (nonce) res.cookie(APPLE_OAUTH_NONCE_COOKIE, nonce, cookieOptions);
+    return res.redirect(
+      isApple
+        ? this.appleAuth.authorizationUrl(state, nonce!)
+        : this.oauth.authorizationUrl(provider, state),
+    );
   }
 
   @Public()
@@ -122,16 +149,23 @@ export class AuthController {
       );
     }
     const state = this.oauth.state();
+    const isApple = provider === "apple";
+    const nonce = isApple ? this.oauth.state() : undefined;
     const cookieOptions = {
       httpOnly: true,
-      secure: process.env.COOKIE_SECURE === "true",
-      sameSite: cookieSameSite(),
+      secure: isApple || process.env.COOKIE_SECURE === "true",
+      sameSite: isApple ? ("none" as const) : cookieSameSite(),
       maxAge: 300000,
     } as const;
     res.cookie("oauth2_state", state, cookieOptions);
     res.cookie("oauth_pkce_challenge", codeChallenge, cookieOptions);
     res.cookie(MOBILE_OAUTH_CLIENT_COOKIE, "true", cookieOptions);
-    return res.redirect(this.oauth.authorizationUrl(provider, state));
+    if (nonce) res.cookie(APPLE_OAUTH_NONCE_COOKIE, nonce, cookieOptions);
+    return res.redirect(
+      isApple
+        ? this.appleAuth.authorizationUrl(state, nonce!)
+        : this.oauth.authorizationUrl(provider, state),
+    );
   }
 
   @Public()
@@ -143,6 +177,36 @@ export class AuthController {
     @Req() req: Request,
     @Res() res: Response,
   ) {
+    return this.completeOAuthCallback(provider, code, state, req, res);
+  }
+
+  @Public()
+  @Post("login/oauth2/code/apple")
+  async appleCallback(
+    @Body() dto: AppleOAuthCallbackDto,
+    @Req() req: Request,
+    @Res() res: Response,
+  ) {
+    return this.completeOAuthCallback(
+      "apple",
+      dto.code,
+      dto.state,
+      req,
+      res,
+      dto.user,
+      dto.error,
+    );
+  }
+
+  private async completeOAuthCallback(
+    provider: string,
+    code: string | undefined,
+    state: string | undefined,
+    req: Request,
+    res: Response,
+    appleUser?: string,
+    oauthError?: string,
+  ) {
     const frontend = process.env.FRONTEND_URL ?? "http://localhost:3000";
     const mobileRedirect =
       process.env.MOBILE_OAUTH_REDIRECT_URI ?? "growdo://oauth/callback";
@@ -152,28 +216,44 @@ export class AuthController {
       : `${frontend}/oauth/callback`;
     const codeChallenge = req.cookies?.oauth_pkce_challenge as
       string | undefined;
+    const appleNonce = req.cookies?.[APPLE_OAUTH_NONCE_COOKIE] as
+      string | undefined;
     if (
+      oauthError ||
       !code ||
       !state ||
       state !== req.cookies?.oauth2_state ||
-      !codeChallenge
+      !codeChallenge ||
+      (provider === "apple" && !appleNonce)
     ) {
-      res.clearCookie(MOBILE_OAUTH_CLIENT_COOKIE);
+      this.clearOAuthCookies(res);
       return res.redirect(`${callbackUrl}?error=oauth_state`);
     }
     try {
-      const user = await this.oauth.callback(provider, code);
+      const user =
+        provider === "apple"
+          ? await this.appleAuth.authenticateWeb({
+              authorizationCode: code,
+              nonce: appleNonce!,
+              user: appleUser,
+            })
+          : await this.oauth.callback(provider, code);
       const loginCode = await this.handoff.issue(user.id, codeChallenge);
-      res.clearCookie("oauth2_state");
-      res.clearCookie("oauth_pkce_challenge");
-      res.clearCookie(MOBILE_OAUTH_CLIENT_COOKIE);
+      this.clearOAuthCookies(res);
       return res.redirect(
         `${callbackUrl}?code=${encodeURIComponent(loginCode)}`,
       );
     } catch {
-      res.clearCookie(MOBILE_OAUTH_CLIENT_COOKIE);
+      this.clearOAuthCookies(res);
       return res.redirect(`${callbackUrl}?error=oauth_failed`);
     }
+  }
+
+  private clearOAuthCookies(res: Response): void {
+    res.clearCookie("oauth2_state");
+    res.clearCookie("oauth_pkce_challenge");
+    res.clearCookie(MOBILE_OAUTH_CLIENT_COOKIE);
+    res.clearCookie(APPLE_OAUTH_NONCE_COOKIE);
   }
 
   @Public()
