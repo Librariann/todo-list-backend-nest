@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Injectable,
   Logger,
   ServiceUnavailableException,
@@ -12,7 +13,10 @@ import {
   PushDeliveryStatus,
 } from "../entities/push-delivery.entity";
 import { PushDevice, PushProvider } from "../entities/push-device.entity";
+import { NotificationPreference } from "../entities/notification-preference.entity";
 import { RegisterPushDeviceDto } from "./dto/register-push-device.dto";
+import type { UpdateNotificationPreferencesDto } from "./dto/update-notification-preferences.dto";
+import { calculateNextReminderAt } from "./reminder-time";
 
 const EXPO_SEND_URL = "https://exp.host/--/api/v2/push/send";
 const EXPO_RECEIPTS_URL = "https://exp.host/--/api/v2/push/getReceipts";
@@ -73,6 +77,18 @@ export interface PushDeviceOutput {
   enabled: boolean;
 }
 
+export interface NotificationPreferencesOutput {
+  pushEnabled: boolean;
+  dailyReminderTime: string;
+  timezone: string;
+}
+
+const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferencesOutput = {
+  pushEnabled: true,
+  dailyReminderTime: "09:00",
+  timezone: "Asia/Seoul",
+};
+
 @Injectable()
 export class PushService {
   private readonly logger = new Logger(PushService.name);
@@ -83,8 +99,52 @@ export class PushService {
     private readonly devices: Repository<PushDevice>,
     @InjectRepository(PushDelivery)
     private readonly deliveries: Repository<PushDelivery>,
+    @InjectRepository(NotificationPreference)
+    private readonly preferences: Repository<NotificationPreference>,
     private readonly config: ConfigService,
   ) {}
+
+  async getPreferences(userId: number): Promise<NotificationPreferencesOutput> {
+    const preference = await this.preferences.findOneBy({ userId });
+    return preference
+      ? this.toPreferencesOutput(preference)
+      : { ...DEFAULT_NOTIFICATION_PREFERENCES };
+  }
+
+  async updatePreferences(
+    userId: number,
+    dto: UpdateNotificationPreferencesDto,
+  ): Promise<NotificationPreferencesOutput> {
+    let preference = await this.preferences.findOneBy({ userId });
+    preference ??= this.preferences.create({
+      userId,
+      ...DEFAULT_NOTIFICATION_PREFERENCES,
+    });
+
+    if (dto.pushEnabled !== undefined) {
+      preference.pushEnabled = dto.pushEnabled;
+    }
+    if (dto.dailyReminderTime !== undefined) {
+      preference.dailyReminderTime = dto.dailyReminderTime;
+    }
+    if (dto.timezone !== undefined) {
+      const timezone = dto.timezone.trim();
+      if (!this.isValidTimezone(timezone)) {
+        throw new BadRequestException("유효하지 않은 타임존입니다.");
+      }
+      preference.timezone = timezone;
+    }
+
+    preference.nextReminderAt = preference.pushEnabled
+      ? calculateNextReminderAt(
+          new Date(),
+          preference.dailyReminderTime,
+          preference.timezone,
+        )
+      : null;
+
+    return this.toPreferencesOutput(await this.preferences.save(preference));
+  }
 
   async register(
     userId: number,
@@ -107,7 +167,28 @@ export class PushService {
       lastRegisteredAt: new Date(),
     });
 
-    return this.toOutput(await this.devices.save(device));
+    const savedDevice = await this.devices.save(device);
+    const preference = await this.preferences.findOneBy({ userId });
+    if (!preference) {
+      const timezone =
+        dto.timezone && this.isValidTimezone(dto.timezone)
+          ? dto.timezone
+          : DEFAULT_NOTIFICATION_PREFERENCES.timezone;
+      await this.preferences.save(
+        this.preferences.create({
+          userId,
+          ...DEFAULT_NOTIFICATION_PREFERENCES,
+          timezone,
+          nextReminderAt: calculateNextReminderAt(
+            new Date(),
+            DEFAULT_NOTIFICATION_PREFERENCES.dailyReminderTime,
+            timezone,
+          ),
+        }),
+      );
+    }
+
+    return this.toOutput(savedDevice);
   }
 
   async unregister(userId: number, installationId: string): Promise<void> {
@@ -124,6 +205,11 @@ export class PushService {
     userId: number,
     message: PushMessage,
   ): Promise<PushSendResult> {
+    const preference = await this.preferences.findOneBy({ userId });
+    if (preference && !preference.pushEnabled) {
+      return { targetedDevices: 0, accepted: 0, failed: 0 };
+    }
+
     const devices = await this.devices.find({
       where: { userId, enabled: true, provider: PushProvider.EXPO },
       order: { lastRegisteredAt: "DESC" },
@@ -348,5 +434,25 @@ export class PushService {
       platform: device.platform,
       enabled: device.enabled,
     };
+  }
+
+  private toPreferencesOutput(
+    preference: NotificationPreference,
+  ): NotificationPreferencesOutput {
+    return {
+      pushEnabled: preference.pushEnabled,
+      dailyReminderTime: preference.dailyReminderTime,
+      timezone: preference.timezone,
+    };
+  }
+
+  private isValidTimezone(timezone: string): boolean {
+    if (!timezone) return false;
+    try {
+      new Intl.DateTimeFormat("en-US", { timeZone: timezone }).format();
+      return true;
+    } catch {
+      return false;
+    }
   }
 }

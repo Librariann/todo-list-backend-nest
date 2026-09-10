@@ -13,15 +13,68 @@ import { PushService } from "./push.service";
 function createService(
   deviceRepository: Record<string, unknown>,
   deliveryRepository: Record<string, unknown> = {},
+  preferenceRepository: Record<string, unknown> = {
+    findOneBy: jest.fn(() => Promise.resolve(null)),
+    create: jest.fn((value: object) => value),
+    save: jest.fn((value: object) => Promise.resolve(value)),
+  },
 ): PushService {
   return new PushService(
     deviceRepository as never,
     deliveryRepository as never,
+    preferenceRepository as never,
     { get: jest.fn(() => undefined) } as never,
   );
 }
 
 describe("PushService", () => {
+  it("returns default notification preferences", async () => {
+    const service = createService({});
+
+    await expect(service.getPreferences(7)).resolves.toEqual({
+      pushEnabled: true,
+      dailyReminderTime: "09:00",
+      timezone: "Asia/Seoul",
+    });
+  });
+
+  it("stores notification preferences", async () => {
+    const preferenceRepository = {
+      findOneBy: jest.fn(() => Promise.resolve(null)),
+      create: jest.fn((value: object) => value),
+      save: jest.fn((value: object) => Promise.resolve(value)),
+    };
+    const service = createService({}, {}, preferenceRepository);
+
+    const result = await service.updatePreferences(7, {
+      pushEnabled: false,
+      dailyReminderTime: "20:30",
+      timezone: "Asia/Seoul",
+    });
+
+    expect(preferenceRepository.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 7,
+        pushEnabled: false,
+        dailyReminderTime: "20:30",
+      }),
+    );
+    expect(result.pushEnabled).toBe(false);
+  });
+
+  it("does not send when the user disabled notifications", async () => {
+    const deviceRepository = { find: jest.fn() };
+    const preferenceRepository = {
+      findOneBy: jest.fn(() => Promise.resolve({ pushEnabled: false })),
+    };
+    const service = createService(deviceRepository, {}, preferenceRepository);
+
+    await expect(
+      service.sendToUser(7, { title: "제목", body: "내용", type: "TEST" }),
+    ).resolves.toEqual({ targetedDevices: 0, accepted: 0, failed: 0 });
+    expect(deviceRepository.find).not.toHaveBeenCalled();
+  });
+
   it("registers a device for the current user", async () => {
     const repository = {
       findOne: jest.fn(() => Promise.resolve(null)),
