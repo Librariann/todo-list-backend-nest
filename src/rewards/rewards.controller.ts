@@ -1,13 +1,16 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
   Get,
+  Headers,
   Param,
   ParseIntPipe,
   Patch,
   Post,
 } from "@nestjs/common";
+import { isUUID } from "class-validator";
 import { CurrentUser } from "../auth/current-user.decorator";
 import { ApiResponse, success } from "../common/api-response";
 import { User } from "../entities/user.entity";
@@ -81,9 +84,14 @@ export class UserRewardsController {
   @Post(":id/redeem")
   async redeem(
     @Param("id", ParseIntPipe) id: number,
+    @Headers("idempotency-key") idempotencyKey: string | undefined,
     @CurrentUser() user: User,
   ): Promise<ApiResponse<UserRewardOutput>> {
-    const result = await this.service.redeem(user.id, id);
+    if (!idempotencyKey || !isUUID(idempotencyKey, "4")) {
+      throw new BadRequestException("유효한 교환 요청 키가 필요합니다.");
+    }
+
+    const result = await this.service.redeem(user.id, id, idempotencyKey);
     return success(result, "보상이 성공적으로 지급되었습니다");
   }
 
