@@ -17,7 +17,12 @@ async function bootstrap() {
       .map((url) => url.trim().replace(/\/$/, ""))
       .filter(Boolean),
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "X-Request-Id"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "X-Request-Id",
+      "Idempotency-Key",
+    ],
     exposedHeaders: ["X-Request-Id"],
     credentials: true,
     maxAge: 3600,
