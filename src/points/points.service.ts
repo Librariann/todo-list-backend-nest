@@ -16,8 +16,9 @@ export class PointsService {
     @InjectRepository(UserPoint) private readonly points: Repository<UserPoint>,
     @InjectRepository(User) private readonly users: Repository<User>,
   ) {}
-  async total(userId: number): Promise<number> {
-    const row = await this.points
+  async total(userId: number, manager?: EntityManager): Promise<number> {
+    const points = manager?.getRepository(UserPoint) ?? this.points;
+    const row = await points
       .createQueryBuilder("p")
       .select(
         "COALESCE(SUM(CASE WHEN p.action = 'CREDIT' THEN p.point ELSE -p.point END), 0)",
@@ -119,15 +120,17 @@ export class PointsService {
   async debitReward(
     userId: number,
     point: number,
-    rewardId: number,
+    redemptionId: number,
+    manager?: EntityManager,
   ): Promise<void> {
-    await this.points.save(
-      this.points.create({
+    const points = manager?.getRepository(UserPoint) ?? this.points;
+    await points.save(
+      points.create({
         userId,
         action: PointAction.DEBIT,
         reason: PointReason.SPEND,
         metaType: PointMetaType.STORE,
-        metaId: rewardId,
+        metaId: redemptionId,
         periodType: null,
         periodKey: null,
         point,
