@@ -12,8 +12,9 @@ import {
 } from "@nestjs/common";
 import { isUUID } from "class-validator";
 import { CurrentUser } from "../auth/current-user.decorator";
+import { Roles } from "../auth/roles.decorator";
 import { ApiResponse, success } from "../common/api-response";
-import { User } from "../entities/user.entity";
+import { User, UserRole } from "../entities/user.entity";
 import { CreateRewardDto } from "./dto/create-rewards.dto";
 import { UpdateRewardDto } from "./dto/update-rewards.dto";
 import {
@@ -40,6 +41,7 @@ export class RewardsController {
   }
 
   @Post("register")
+  @Roles(UserRole.ADMIN)
   async create(
     @Body() dto: CreateRewardDto,
   ): Promise<ApiResponse<RewardOutput>> {
@@ -53,6 +55,7 @@ export class RewardsController {
   }
 
   @Patch(":id")
+  @Roles(UserRole.ADMIN)
   async update(
     @Param("id", ParseIntPipe) id: number,
     @Body() dto: UpdateRewardDto,
@@ -62,6 +65,7 @@ export class RewardsController {
   }
 
   @Delete(":id")
+  @Roles(UserRole.ADMIN)
   async remove(
     @Param("id", ParseIntPipe) id: number,
   ): Promise<ApiResponse<RewardOutput>> {

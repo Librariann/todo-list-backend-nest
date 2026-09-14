@@ -47,9 +47,7 @@ export class UsersController {
     const result = await this.service.nicknameAvailable(value);
     return success(
       result,
-      result
-        ? "사용 가능한 사용자명입니다."
-        : "이미 사용 중인 사용자명입니다.",
+      result ? "사용 가능한 사용자명입니다." : "이미 사용 중인 사용자명입니다.",
     );
   }
 
@@ -95,6 +93,7 @@ export class UsersController {
   }
 
   @Get("active")
+  @Roles(UserRole.ADMIN)
   async active(): Promise<ApiResponse<UserOutput[]>> {
     const result = await this.service.active();
     return success(result, "활성 사용자 목록 조회가 완료되었습니다.");
@@ -108,6 +107,7 @@ export class UsersController {
   }
 
   @Get("username/:username")
+  @Roles(UserRole.ADMIN)
   async byNickname(
     @Param("username") value: string,
   ): Promise<ApiResponse<UserOutput>> {
@@ -116,6 +116,7 @@ export class UsersController {
   }
 
   @Get(":id")
+  @Roles(UserRole.ADMIN)
   async byId(
     @Param("id", ParseIntPipe) id: number,
   ): Promise<ApiResponse<UserOutput>> {

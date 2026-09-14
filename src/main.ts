@@ -29,18 +29,21 @@ async function bootstrap() {
   });
   app.use(cookieParser());
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
-  const config = new DocumentBuilder()
-    .setTitle("Growdo Backend API")
-    .setDescription("Spring Boot 버전과 호환되는 NestJS API")
-    .setVersion("1.0")
-    .addBearerAuth()
-    .build();
-  SwaggerModule.setup(
-    "swagger-ui.html",
-    app,
-    SwaggerModule.createDocument(app, config),
-    { jsonDocumentUrl: "api-docs" },
-  );
+
+  if (process.env.SWAGGER_ENABLED === "true") {
+    const config = new DocumentBuilder()
+      .setTitle("Growdo API")
+      .setDescription("Spring Boot 버전과 호환되는 NestJS API")
+      .setVersion("1.0")
+      .addBearerAuth()
+      .build();
+
+    const document = SwaggerModule.createDocument(app, config);
+    SwaggerModule.setup("swagger-ui.html", app, document, {
+      jsonDocumentUrl: "api-docs",
+    });
+  }
+
   await app.listen(Number(process.env.PORT ?? 8080));
 }
 void bootstrap();
