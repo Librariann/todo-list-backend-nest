@@ -16,6 +16,27 @@ export interface LoginResult {
   email: string;
 }
 
+const OAUTH_NICKNAME_MAX_WEIGHT = 12;
+
+function normalizeOAuthNickname(
+  value: string,
+  maxWeight = OAUTH_NICKNAME_MAX_WEIGHT,
+): string {
+  const sanitized = value
+    .trim()
+    .replace(/\s+/g, "_")
+    .replace(/[^가-힣a-zA-Z0-9_]/g, "");
+  let nickname = "";
+  let weight = 0;
+  for (const character of sanitized) {
+    const nextWeight = /[가-힣]/.test(character) ? 2 : 1;
+    if (weight + nextWeight > maxWeight) break;
+    nickname += character;
+    weight += nextWeight;
+  }
+  return nickname;
+}
+
 @Injectable()
 export class AuthService {
   private readonly accessMs: number;
@@ -114,6 +135,7 @@ export class AuthService {
     providerId: string,
     email: string,
     name: string,
+    profileNickname?: string,
     providerRefreshToken?: string,
     providerClientId?: string,
   ): Promise<User> {
@@ -121,8 +143,22 @@ export class AuthService {
       where: [{ provider, providerId }, { email }],
     });
     if (!user) {
+      const preferredNickname =
+        normalizeOAuthNickname(profileNickname || name) ||
+        normalizeOAuthNickname(email.split("@")[0]) ||
+        "GrowDo";
+      let nickname = preferredNickname;
+      let suffix = 2;
+      while (await this.users.exists({ where: { nickname } })) {
+        const suffixText = String(suffix++);
+        nickname =
+          normalizeOAuthNickname(
+            preferredNickname,
+            OAUTH_NICKNAME_MAX_WEIGHT - suffixText.length,
+          ) + suffixText;
+      }
       user = this.users.create({
-        nickname: email.split("@")[0].slice(0, 12),
+        nickname,
         email,
         name,
         password: await bcrypt.hash(crypto.randomUUID(), 12),

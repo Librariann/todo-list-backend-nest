@@ -104,11 +104,19 @@ export class OAuthService {
         account.profile?.nickname ??
         email.split("@")[0],
     );
+    const profileNickname = String(
+      profile.nickname ??
+        account.profile?.nickname ??
+        profile.properties?.nickname ??
+        profile.name ??
+        email.split("@")[0],
+    );
     const user = await this.auth.upsertOAuth(
       name,
       String(profile.sub ?? profile.id),
       email,
       displayName,
+      profileNickname,
     );
     return user;
   }

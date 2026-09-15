@@ -24,6 +24,10 @@ function reward(overrides: Partial<Reward> = {}): Reward {
     discount: true,
     discountRate: 15,
     isActive: true,
+    imageUrl: null,
+    availableFrom: null,
+    exchangeEnabled: true,
+    stockQuantity: 2,
     ...overrides,
   } as Reward;
 }
@@ -37,6 +41,7 @@ function setupRedeem(options?: {
   const rewardFind = jest.fn(() =>
     Promise.resolve(options?.reward === undefined ? reward() : options.reward),
   );
+  const rewardSave = jest.fn((value: Reward) => Promise.resolve(value));
   const existingFind = jest.fn(() =>
     Promise.resolve(options?.existing ?? null),
   );
@@ -77,7 +82,7 @@ function setupRedeem(options?: {
 
   const repositories = new Map<unknown, unknown>([
     [User, { findOne: userLock }],
-    [Reward, { findOneBy: rewardFind }],
+    [Reward, { findOne: rewardFind, save: rewardSave }],
     [
       RewardRedemption,
       {
@@ -117,6 +122,8 @@ function setupRedeem(options?: {
   return {
     service,
     userLock,
+    rewardFind,
+    rewardSave,
     redemptionCreate,
     redemptionSave,
     ownedCreate,
@@ -139,8 +146,15 @@ describe("RewardsService", () => {
   });
 
   it("locks the user and stores one redemption with its point debit", async () => {
-    const { service, userLock, redemptionCreate, ownedCreate, points } =
-      setupRedeem();
+    const {
+      service,
+      userLock,
+      rewardFind,
+      rewardSave,
+      redemptionCreate,
+      ownedCreate,
+      points,
+    } = setupRedeem();
 
     const result = await service.redeem(1, 3, IDEMPOTENCY_KEY);
 
@@ -150,6 +164,13 @@ describe("RewardsService", () => {
     });
     expect(userLock.mock.invocationCallOrder[0]).toBeLessThan(
       points.total.mock.invocationCallOrder[0],
+    );
+    expect(rewardFind).toHaveBeenCalledWith({
+      where: { id: 3, isActive: true },
+      lock: { mode: "pessimistic_write" },
+    });
+    expect(rewardSave).toHaveBeenCalledWith(
+      expect.objectContaining({ stockQuantity: 1 }),
     );
     expect(redemptionCreate).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -224,6 +245,43 @@ describe("RewardsService", () => {
     await expect(service.redeem(1, 99, IDEMPOTENCY_KEY)).rejects.toBeInstanceOf(
       NotFoundException,
     );
+    expect(points.total).not.toHaveBeenCalled();
+  });
+
+  it("rejects redemption when coupon stock is exhausted", async () => {
+    const { service, rewardSave, ownedSave, points } = setupRedeem({
+      reward: reward({ stockQuantity: 0 }),
+    });
+
+    await expect(service.redeem(1, 3, IDEMPOTENCY_KEY)).rejects.toThrow(
+      "준비된 쿠폰이 모두 소진되었습니다.",
+    );
+    expect(rewardSave).not.toHaveBeenCalled();
+    expect(ownedSave).not.toHaveBeenCalled();
+    expect(points.debitReward).not.toHaveBeenCalled();
+  });
+
+  it("rejects redemption while exchange is disabled", async () => {
+    const { service, rewardSave, points } = setupRedeem({
+      reward: reward({ exchangeEnabled: false }),
+    });
+
+    await expect(service.redeem(1, 3, IDEMPOTENCY_KEY)).rejects.toThrow(
+      "현재 교환이 잠시 중단된 보상입니다.",
+    );
+    expect(rewardSave).not.toHaveBeenCalled();
+    expect(points.total).not.toHaveBeenCalled();
+  });
+
+  it("rejects redemption before its scheduled opening time", async () => {
+    const { service, rewardSave, points } = setupRedeem({
+      reward: reward({ availableFrom: new Date("2099-01-01T00:00:00.000Z") }),
+    });
+
+    await expect(service.redeem(1, 3, IDEMPOTENCY_KEY)).rejects.toThrow(
+      "아직 교환이 시작되지 않은 보상입니다.",
+    );
+    expect(rewardSave).not.toHaveBeenCalled();
     expect(points.total).not.toHaveBeenCalled();
   });
 });

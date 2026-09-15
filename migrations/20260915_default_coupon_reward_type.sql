@@ -1,0 +1,2 @@
+ALTER TABLE todo_list.rewards
+  ALTER COLUMN type SET DEFAULT 'COUPON';

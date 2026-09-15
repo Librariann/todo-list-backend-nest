@@ -80,6 +80,7 @@ describe("AppleAuthService", () => {
       "apple-user-id",
       "user@privaterelay.appleid.com",
       "홍길동",
+      "홍길동",
       "apple-refresh-token",
       "com.growdo.app",
     );

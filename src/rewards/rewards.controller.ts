@@ -49,6 +49,8 @@ export class RewardsController {
       discount: false,
       discountRate: 0,
       isActive: true,
+      exchangeEnabled: true,
+      stockQuantity: 0,
       ...dto,
     });
     return success(result, "보상이 성공적으로 등록 완료되었습니다.");

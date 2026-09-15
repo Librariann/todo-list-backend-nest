@@ -27,6 +27,10 @@ export interface RewardOutput {
   discount: boolean;
   discountRate: number;
   isActive: boolean;
+  imageUrl: string | null;
+  availableFrom: Date | null;
+  exchangeEnabled: boolean;
+  stockQuantity: number;
 }
 
 export interface UserRewardOutput {
@@ -40,6 +44,7 @@ export interface UserRewardOutput {
   discount: boolean;
   discountRate: number;
   isUsed: boolean;
+  imageUrl: string | null;
 }
 
 function rewardResponse(reward: Reward): RewardOutput {
@@ -54,6 +59,10 @@ function rewardResponse(reward: Reward): RewardOutput {
     discount: reward.discount,
     discountRate: reward.discountRate,
     isActive: reward.isActive,
+    imageUrl: reward.imageUrl,
+    availableFrom: reward.availableFrom,
+    exchangeEnabled: reward.exchangeEnabled,
+    stockQuantity: reward.stockQuantity,
   };
 }
 
@@ -69,6 +78,7 @@ function userRewardResponse(reward: UserReward): UserRewardOutput {
     discount: reward.discount,
     discountRate: reward.discountRate,
     isUsed: reward.isUsed,
+    imageUrl: reward.rewardImageUrl,
   };
 }
 
@@ -100,6 +110,7 @@ export class RewardsService {
 
     return rewardResponse(reward);
   }
+
   async create(dto: CreateRewardDto): Promise<RewardOutput> {
     const rewardExists = await this.rewards.exists({
       where: { name: dto.name },
@@ -107,26 +118,48 @@ export class RewardsService {
     if (rewardExists) {
       throw new ConflictException(`이미 사용중인 보상명 입니다: ${dto.name}`);
     }
-    const rewardSave = await this.rewards.save(this.rewards.create(dto));
+    const { availableFrom, imageUrl, ...values } = dto;
+    const rewardSave = await this.rewards.save(
+      this.rewards.create({
+        ...values,
+        type: values.type ?? RewardType.COUPON,
+        imageUrl: imageUrl?.trim() || null,
+        availableFrom: availableFrom ? new Date(availableFrom) : null,
+      }),
+    );
 
     return rewardResponse(rewardSave);
   }
+
   async update(id: number, dto: UpdateRewardDto): Promise<RewardOutput> {
     const reward = await this.rewards.findOneBy({ id, isActive: true });
     if (!reward) {
       throw new NotFoundException(`보상을 찾을 수 없습니다: ${id}`);
     }
-    Object.assign(reward, dto);
-    const rewardSave = await this.rewards.save(reward);
 
+    Object.assign(reward, dto);
+
+    if ("imageUrl" in dto) {
+      reward.imageUrl = dto.imageUrl?.trim() || null;
+    }
+
+    if ("availableFrom" in dto) {
+      reward.availableFrom = dto.availableFrom
+        ? new Date(dto.availableFrom)
+        : null;
+    }
+
+    const rewardSave = await this.rewards.save(reward);
     return rewardResponse(rewardSave);
   }
 
   async remove(id: number): Promise<RewardOutput> {
     const reward = await this.rewards.findOneBy({ id });
+
     if (!reward) {
       throw new NotFoundException(`보상을 찾을 수 없습니다: ${id}`);
     }
+
     reward.isActive = false;
     const rewardSave = await this.rewards.save(reward);
 
@@ -170,13 +203,26 @@ export class RewardsService {
         return this.findExistingRedemptionResult(existing, manager);
       }
 
-      const reward = await manager.getRepository(Reward).findOneBy({
-        id: rewardId,
-        isActive: true,
+      const rewards = manager.getRepository(Reward);
+      const reward = await rewards.findOne({
+        where: { id: rewardId, isActive: true },
+        lock: { mode: "pessimistic_write" },
       });
 
       if (!reward) {
         throw new NotFoundException(`보상을 찾을 수 없습니다: ${rewardId}`);
+      }
+
+      if (!reward.exchangeEnabled) {
+        throw new BadRequestException("현재 교환이 잠시 중단된 보상입니다.");
+      }
+
+      if (reward.availableFrom && reward.availableFrom > new Date()) {
+        throw new BadRequestException("아직 교환이 시작되지 않은 보상입니다.");
+      }
+
+      if (reward.type === RewardType.COUPON && reward.stockQuantity <= 0) {
+        throw new BadRequestException("준비된 쿠폰이 모두 소진되었습니다.");
       }
 
       const purchasePoint = rewardPurchasePoint(reward);
@@ -197,6 +243,11 @@ export class RewardsService {
         }),
       );
 
+      if (reward.type === RewardType.COUPON) {
+        reward.stockQuantity -= 1;
+        await rewards.save(reward);
+      }
+
       await this.points.debitReward(
         userId,
         purchasePoint,
@@ -216,6 +267,7 @@ export class RewardsService {
           discount: reward.discount,
           discountRate: reward.discountRate,
           isUsed: false,
+          rewardImageUrl: reward.imageUrl,
         }),
       );
 

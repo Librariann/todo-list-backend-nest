@@ -69,6 +69,7 @@ export class AppleAuthService {
         payload.sub,
         payload.email,
         name,
+        name,
         tokens.refresh_token,
         clientId,
       );
@@ -107,6 +108,7 @@ export class AppleAuthService {
         "apple",
         payload.sub,
         payload.email,
+        name,
         name,
         tokens.refresh_token,
         clientId,
