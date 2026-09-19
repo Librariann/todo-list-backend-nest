@@ -16,6 +16,7 @@ import { SlackModule } from "./common/slack.module";
 import { GoalsModule } from "./goals/goals.module";
 import { HabitsModule } from "./habits/habits.module";
 import { HealthModule } from "./health/health.module";
+import { NoticesModule } from "./notices/notices.module";
 import { PointsModule } from "./points/points.module";
 import { PushModule } from "./push/push.module";
 import { RewardsModule } from "./rewards/rewards.module";
@@ -94,6 +95,7 @@ const HEALTH_PATHS = new Set(["/health", "/health/detail"]);
       }),
     }),
     HealthModule,
+    NoticesModule,
     AuthModule,
     UsersModule,
     PointsModule,
