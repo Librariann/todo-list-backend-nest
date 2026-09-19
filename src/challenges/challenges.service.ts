@@ -781,6 +781,7 @@ export class ChallengesService {
     }
   }
 
+  //TODO: 진행 로직 파악 필요
   private async currentAssignments(
     workType?: WorkType,
   ): Promise<ChallengeAssignment[]> {
@@ -884,7 +885,9 @@ export class ChallengesService {
     return result;
   }
 
-  async achieved(userId: number): Promise<ChallengeProgressOutput[]> {
+  async getAchievedByUserId(
+    userId: number,
+  ): Promise<ChallengeProgressOutput[]> {
     const progresses = await this.progresses.find({
       where: { userId, isAchieved: true },
       relations: { challenge: true, assignment: true },
@@ -894,7 +897,7 @@ export class ChallengesService {
     const result = progresses.map(progressResponse);
     return result;
   }
-
+  //TODO: 여기서부터 도전과제 진행사항 로직 파악 필수임
   async recalculateProgress(
     userId: number,
     workType: WorkType,
