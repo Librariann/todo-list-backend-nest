@@ -7,6 +7,7 @@ import {
 import { Cron } from "@nestjs/schedule";
 import { InjectRepository } from "@nestjs/typeorm";
 import {
+  Between,
   DataSource,
   EntityManager,
   In,
@@ -242,6 +243,44 @@ export class GoalsService {
     const result = getFindLists.map(goalResponse);
 
     return result;
+  }
+
+  async markedDates(userId: number, from: string, to: string): Promise<string[]> {
+    if (!isValidDateString(from) || !isValidDateString(to) || from > to) {
+      throw new BadRequestException(
+        "조회 기간은 올바른 YYYY-MM-DD 범위여야 합니다.",
+      );
+    }
+
+    const [startedGoals, achievedProcesses] = await Promise.all([
+      this.goals.find({
+        select: { startDate: true },
+        where: { userId, isActive: true, startDate: Between(from, to) },
+      }),
+      this.processes.find({
+        select: { achievedAt: true },
+        where: {
+          userId,
+          isAchieved: true,
+          achievedAt: Between(
+            new Date(`${from}T00:00:00+09:00`),
+            new Date(`${to}T23:59:59.999+09:00`),
+          ),
+          goal: { isActive: true },
+        },
+      }),
+    ]);
+
+    const dates = new Set(startedGoals.map((goal) => goal.startDate));
+    for (const process of achievedProcesses) {
+      if (!process.achievedAt) continue;
+      dates.add(
+        process.achievedAt.toLocaleDateString("sv-SE", {
+          timeZone: "Asia/Seoul",
+        }),
+      );
+    }
+    return [...dates].sort();
   }
 
   async get(userId: number, id: number): Promise<GoalOutput> {
