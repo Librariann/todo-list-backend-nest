@@ -7,6 +7,7 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Query,
 } from "@nestjs/common";
 import { CurrentUser } from "../auth/current-user.decorator";
 import { ApiResponse, success } from "../common/api-response";
@@ -39,6 +40,16 @@ export class GoalsController {
   async list(@CurrentUser() user: User): Promise<ApiResponse<GoalOutput[]>> {
     const result = await this.service.list(user.id);
     return success(result, "목표 목록 조회 성공");
+  }
+
+  @Get("calendar")
+  async calendar(
+    @Query("from") from: string,
+    @Query("to") to: string,
+    @CurrentUser() user: User,
+  ): Promise<ApiResponse<string[]>> {
+    const result = await this.service.markedDates(user.id, from, to);
+    return success(result, "목표 시작일과 달성일 조회 성공");
   }
 
   @Get("by-date/:date")
