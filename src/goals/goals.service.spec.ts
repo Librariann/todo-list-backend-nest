@@ -45,6 +45,7 @@ function setup(entity: Goal, currentProcess: GoalProcess, currentStreak = 1) {
     longestStreak: currentStreak,
   } as GoalStreak;
   const goalRepository = {
+    find: jest.fn(() => Promise.resolve([] as Goal[])),
     findOneBy: jest.fn(() => Promise.resolve(entity)),
   };
   const lockedGoalRepository = {
@@ -87,6 +88,7 @@ function setup(entity: Goal, currentProcess: GoalProcess, currentStreak = 1) {
   return {
     service,
     streak,
+    goalRepository,
     processRepository,
     streakRepository,
     challenges,
@@ -94,6 +96,51 @@ function setup(entity: Goal, currentProcess: GoalProcess, currentStreak = 1) {
     lockedGoalRepository,
   };
 }
+
+describe("GoalsService.markedDates", () => {
+  it("returns only goal start and achieved dates in the Seoul time zone", async () => {
+    const entity = goal(PeriodType.DAILY);
+    entity.startDate = "2026-10-01";
+    const completedProcess = process(entity);
+    completedProcess.isAchieved = true;
+    completedProcess.achievedAt = new Date("2026-10-16T15:30:00.000Z");
+    const { service, goalRepository, processRepository } = setup(
+      entity,
+      completedProcess,
+    );
+    goalRepository.find.mockResolvedValue([entity]);
+    processRepository.find.mockResolvedValue([completedProcess]);
+
+    await expect(service.markedDates(7, "2026-10-01", "2026-10-31")).resolves.toEqual([
+      "2026-10-01",
+      "2026-10-17",
+    ]);
+    expect(goalRepository.find).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ userId: 7, isActive: true }),
+      }),
+    );
+    expect(processRepository.find).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ userId: 7, isAchieved: true }),
+      }),
+    );
+  });
+
+  it("rejects an invalid date range", async () => {
+    const entity = goal(PeriodType.DAILY);
+    const { service, goalRepository, processRepository } = setup(
+      entity,
+      process(entity),
+    );
+
+    await expect(service.markedDates(7, "2026-10-31", "2026-10-01")).rejects.toThrow(
+      "조회 기간은 올바른 YYYY-MM-DD 범위여야 합니다.",
+    );
+    expect(goalRepository.find).not.toHaveBeenCalled();
+    expect(processRepository.find).not.toHaveBeenCalled();
+  });
+});
 
 describe("GoalsService.achieve", () => {
   it("locks the goal and current period while completing it", async () => {
