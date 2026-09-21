@@ -162,7 +162,7 @@ export class UserChallengesController {
   async achieved(
     @CurrentUser() user: User,
   ): Promise<ApiResponse<ChallengeProgressOutput[]>> {
-    const result = await this.service.achieved(user.id);
+    const result = await this.service.getAchievedByUserId(user.id);
     return success(result, "달성한 도전과제 목록을 성공적으로 불러왔습니다.");
   }
 
