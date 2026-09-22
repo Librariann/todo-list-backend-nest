@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
-import { DataSource, EntityManager, Repository } from "typeorm";
+import { DataSource, EntityManager, In, Repository } from "typeorm";
 import {
   RewardRedemption,
   RewardRedemptionStatus,
@@ -14,6 +14,7 @@ import { Reward, RewardType, UserReward } from "../entities/reward.entity";
 import { User } from "../entities/user.entity";
 import { PointsService } from "../points/points.service";
 import type { CreateRewardDto } from "./dto/create-rewards.dto";
+import type { ReorderRewardsDto } from "./dto/reorder-rewards.dto";
 import type { UpdateRewardDto } from "./dto/update-rewards.dto";
 
 export interface RewardOutput {
@@ -31,6 +32,7 @@ export interface RewardOutput {
   availableFrom: Date | null;
   exchangeEnabled: boolean;
   stockQuantity: number;
+  sortOrder: number;
 }
 
 export interface UserRewardOutput {
@@ -63,6 +65,7 @@ function rewardResponse(reward: Reward): RewardOutput {
     availableFrom: reward.availableFrom,
     exchangeEnabled: reward.exchangeEnabled,
     stockQuantity: reward.stockQuantity,
+    sortOrder: reward.sortOrder,
   };
 }
 
@@ -100,7 +103,48 @@ export class RewardsService {
     private readonly dataSource: DataSource,
   ) {}
   async list(): Promise<RewardOutput[]> {
-    return (await this.rewards.findBy({ isActive: true })).map(rewardResponse);
+    const result = await this.rewards.find({
+      where: { isActive: true },
+      order: { sortOrder: "ASC", id: "ASC" },
+    });
+    return result.map(rewardResponse);
+  }
+
+  async reorder(dto: ReorderRewardsDto): Promise<RewardOutput[]> {
+    return this.dataSource.transaction(async (manager) => {
+      await this.lockCatalogOrder(manager);
+      const rewards = manager.getRepository(Reward);
+      // Lock in a fixed order so simultaneous reorders serialize consistently.
+      const activeRewards = await rewards
+        .createQueryBuilder("reward")
+        .where("reward.isActive = :isActive", { isActive: true })
+        .orderBy("reward.id", "ASC")
+        .setLock("pessimistic_write")
+        .getMany();
+      const activeIds = new Set(
+        activeRewards.map((reward) => Number(reward.id)),
+      );
+      const { rewardIds } = dto;
+      if (
+        rewardIds.length !== activeIds.size ||
+        new Set(rewardIds).size !== rewardIds.length ||
+        rewardIds.some((id) => !activeIds.has(id))
+      ) {
+        throw new ConflictException(
+          "보상 목록이 변경되었습니다. 목록을 새로고침한 후 다시 정렬해 주세요.",
+        );
+      }
+
+      for (const [index, id] of rewardIds.entries()) {
+        // Never save a full entity here: coupon stock belongs to redemption.
+        await rewards.update({ id }, { sortOrder: index + 1 });
+      }
+      const result = await rewards.find({
+        where: { id: In(rewardIds) },
+        order: { sortOrder: "ASC", id: "ASC" },
+      });
+      return result.map(rewardResponse);
+    });
   }
   async get(id: number): Promise<RewardOutput> {
     const reward = await this.rewards.findOneBy({ id, isActive: true });
@@ -112,23 +156,36 @@ export class RewardsService {
   }
 
   async create(dto: CreateRewardDto): Promise<RewardOutput> {
-    const rewardExists = await this.rewards.exists({
-      where: { name: dto.name },
-    });
-    if (rewardExists) {
-      throw new ConflictException(`이미 사용중인 보상명 입니다: ${dto.name}`);
-    }
-    const { availableFrom, imageUrl, ...values } = dto;
-    const rewardSave = await this.rewards.save(
-      this.rewards.create({
-        ...values,
-        type: values.type ?? RewardType.COUPON,
-        imageUrl: imageUrl?.trim() || null,
-        availableFrom: availableFrom ? new Date(availableFrom) : null,
-      }),
-    );
+    return this.dataSource.transaction(async (manager) => {
+      await this.lockCatalogOrder(manager);
+      const rewards = manager.getRepository(Reward);
+      const rewardExists = await rewards.exists({
+        where: { name: dto.name },
+      });
+      if (rewardExists) {
+        throw new ConflictException(`이미 사용중인 보상명 입니다: ${dto.name}`);
+      }
+      const sortOrder = (await rewards.maximum("sortOrder")) ?? 0;
+      const { availableFrom, imageUrl, ...values } = dto;
+      const result = await rewards.save(
+        rewards.create({
+          ...values,
+          type: values.type ?? RewardType.COUPON,
+          imageUrl: imageUrl?.trim() || null,
+          availableFrom: availableFrom ? new Date(availableFrom) : null,
+          sortOrder: sortOrder + 1,
+        }),
+      );
 
-    return rewardResponse(rewardSave);
+      return rewardResponse(result);
+    });
+  }
+
+  private async lockCatalogOrder(manager: EntityManager): Promise<void> {
+    // Serialize append and reorder before reading positions or taking row locks.
+    await manager.query("SELECT pg_advisory_xact_lock(hashtext($1)::bigint)", [
+      "rewards:catalog-order",
+    ]);
   }
 
   async update(id: number, dto: UpdateRewardDto): Promise<RewardOutput> {
@@ -137,20 +194,22 @@ export class RewardsService {
       throw new NotFoundException(`보상을 찾을 수 없습니다: ${id}`);
     }
 
-    Object.assign(reward, dto);
+    const { imageUrl, availableFrom, ...values } = dto;
+    const changes: Partial<Reward> = { ...values };
 
     if ("imageUrl" in dto) {
-      reward.imageUrl = dto.imageUrl?.trim() || null;
+      changes.imageUrl = imageUrl?.trim() || null;
     }
 
     if ("availableFrom" in dto) {
-      reward.availableFrom = dto.availableFrom
-        ? new Date(dto.availableFrom)
-        : null;
+      changes.availableFrom = availableFrom ? new Date(availableFrom) : null;
     }
 
-    const rewardSave = await this.rewards.save(reward);
-    return rewardResponse(rewardSave);
+    if (Object.values(changes).some((value) => value !== undefined)) {
+      await this.rewards.update({ id }, changes);
+    }
+    const result = await this.rewards.findOneByOrFail({ id });
+    return rewardResponse(result);
   }
 
   async remove(id: number): Promise<RewardOutput> {
@@ -160,10 +219,9 @@ export class RewardsService {
       throw new NotFoundException(`보상을 찾을 수 없습니다: ${id}`);
     }
 
-    reward.isActive = false;
-    const rewardSave = await this.rewards.save(reward);
-
-    return rewardResponse(rewardSave);
+    await this.rewards.update({ id }, { isActive: false });
+    const result = await this.rewards.findOneByOrFail({ id });
+    return rewardResponse(result);
   }
 
   async userList(userId: number): Promise<UserRewardOutput[]> {

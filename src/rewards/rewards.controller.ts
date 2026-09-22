@@ -16,6 +16,7 @@ import { Roles } from "../auth/roles.decorator";
 import { ApiResponse, success } from "../common/api-response";
 import { User, UserRole } from "../entities/user.entity";
 import { CreateRewardDto } from "./dto/create-rewards.dto";
+import { ReorderRewardsDto } from "./dto/reorder-rewards.dto";
 import { UpdateRewardDto } from "./dto/update-rewards.dto";
 import {
   RewardOutput,
@@ -54,6 +55,15 @@ export class RewardsController {
       ...dto,
     });
     return success(result, "보상이 성공적으로 등록 완료되었습니다.");
+  }
+
+  @Patch("order")
+  @Roles(UserRole.ADMIN)
+  async reorder(
+    @Body() dto: ReorderRewardsDto,
+  ): Promise<ApiResponse<RewardOutput[]>> {
+    const result = await this.service.reorder(dto);
+    return success(result, "보상 순서가 저장되었습니다.");
   }
 
   @Patch(":id")

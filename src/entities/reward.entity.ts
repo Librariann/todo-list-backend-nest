@@ -40,6 +40,9 @@ export class Reward extends BaseEntity {
 
   @Column({ name: "stock_quantity", default: 0 })
   stockQuantity: number;
+
+  @Column({ name: "sort_order", type: "int", default: 0 })
+  sortOrder: number;
 }
 
 @Entity({ name: "user_rewards", schema: "todo_list" })

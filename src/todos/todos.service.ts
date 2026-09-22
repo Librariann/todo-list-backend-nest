@@ -117,7 +117,9 @@ export class TodosService {
         .getExists();
 
       if (duplicated) {
-        throw new ConflictException(`이미 사용중인 할 일명 입니다: ${dto.name}`);
+        throw new ConflictException(
+          `이미 사용중인 할 일명 입니다: ${dto.name}`,
+        );
       }
     }
 
@@ -125,7 +127,6 @@ export class TodosService {
     return todoResponse(await this.todos.save(todo));
   }
 
-  //TODO: 추후 고민필요.. 완료된 할 일 상태 변경이 안된다..?
   async status(
     userId: number,
     id: number,
