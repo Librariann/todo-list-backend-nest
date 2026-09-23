@@ -18,8 +18,7 @@ export class PointsController {
   @Roles(UserRole.ADMIN)
   @Post()
   async input(@Body() dto: PointInputDto): Promise<ApiResponse<number>> {
-    console.log(dto);
-    const result = await this.service.adjust(+dto.id, dto.point);
+    const result = await this.service.adjust(dto.id, dto.point);
     return success(result, "포인트 입력 성공");
   }
 }

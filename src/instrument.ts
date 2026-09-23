@@ -1,5 +1,6 @@
 import { config as loadEnv } from "dotenv";
 import * as Sentry from "@sentry/nestjs";
+import { redactCouponTelemetry } from "./common/coupon-telemetry";
 
 // Railway 같은 플랫폼은 실제 환경변수를 주입하지만, 로컬에서는 .env 파일을 읽어야
 // Sentry / Slack 설정이 적용된다. ConfigModule 은 Nest 부트스트랩 이후에 로드되므로
@@ -21,4 +22,6 @@ Sentry.init({
   tracesSampleRate: Number(process.env.SENTRY_TRACES_SAMPLE_RATE ?? 0),
   // 헬스체크 요청은 노이즈라 트랜잭션에서 제외한다.
   ignoreTransactions: ["GET /health", "GET /health/detail"],
+  beforeSend: (event) => redactCouponTelemetry(event),
+  beforeSendTransaction: (event) => redactCouponTelemetry(event),
 });

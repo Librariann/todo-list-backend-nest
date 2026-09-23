@@ -50,7 +50,7 @@ export interface AdminUserAssetOutput extends UserOutput {
 
 export function userResponse(user: User): UserOutput {
   return {
-    id: user.id,
+    id: Number(user.id),
     nickname: user.nickname,
     email: user.email,
     name: user.name,

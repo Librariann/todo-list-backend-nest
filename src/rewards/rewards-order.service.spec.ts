@@ -65,11 +65,37 @@ function setup(rows: Reward[] = [reward(1), reward(2)]) {
     {} as never,
     {} as never,
     dataSource as never,
+    {
+      availableCounts: () =>
+        Promise.resolve(new Map(rows.map((row) => [Number(row.id), 3]))),
+    } as never,
   );
   return { service, repository, query, dataSource, rows, manager };
 }
 
 describe("reward ordering", () => {
+  it("derives coupon stock from available inventory instead of the stored counter", async () => {
+    const { service, repository } = setup([
+      { ...reward(1), stockQuantity: 999 },
+    ]);
+    const result = await service.list();
+    expect(result[0].stockQuantity).toBe(3);
+    await service.update(1, { stockQuantity: 500 });
+    expect(repository.update).not.toHaveBeenCalled();
+  });
+
+  it("creates coupon rewards without trusting an arbitrary stock counter", async () => {
+    const { service, repository } = setup();
+    await service.create({
+      name: "실물 쿠폰 보상",
+      point: 100,
+      description: "설명",
+      stockQuantity: 999,
+    });
+    expect(repository.create).toHaveBeenCalledWith(
+      expect.objectContaining({ stockQuantity: 0 }),
+    );
+  });
   it("lists active rewards by persisted order with deterministic legacy ties", async () => {
     const { service, repository } = setup([reward(2), reward(1)]);
     const result = await service.list();
@@ -193,6 +219,7 @@ describe("reward ordering", () => {
       {} as never,
       {} as never,
       dataSource as never,
+      { availableCounts: () => Promise.resolve(new Map()) } as never,
     );
     await expect(
       service.create({

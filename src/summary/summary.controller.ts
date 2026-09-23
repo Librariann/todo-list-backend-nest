@@ -1,4 +1,4 @@
-import { Controller, Get } from "@nestjs/common";
+import { Controller, Get, Header } from "@nestjs/common";
 import { CurrentUser } from "../auth/current-user.decorator";
 import { ChallengesService } from "../challenges/challenges.service";
 import { success } from "../common/api-response";
@@ -15,10 +15,11 @@ export class SummaryController {
   ) {}
 
   @Get()
+  @Header("Cache-Control", "private, no-store")
   async get(@CurrentUser() user: User) {
     const [points, rewards, achievedChallenges] = await Promise.all([
       this.points.total(user.id),
-      this.rewards.userList(user.id),
+      this.rewards.userSummaryList(user.id),
       this.challenges.achieved(user.id),
     ]);
     return success(

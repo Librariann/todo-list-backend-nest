@@ -5,10 +5,12 @@ import {
   Delete,
   Get,
   Headers,
+  Header,
   Param,
   ParseIntPipe,
   Patch,
   Post,
+  StreamableFile,
 } from "@nestjs/common";
 import { isUUID } from "class-validator";
 import { CurrentUser } from "../auth/current-user.decorator";
@@ -18,6 +20,7 @@ import { User, UserRole } from "../entities/user.entity";
 import { CreateRewardDto } from "./dto/create-rewards.dto";
 import { ReorderRewardsDto } from "./dto/reorder-rewards.dto";
 import { UpdateRewardDto } from "./dto/update-rewards.dto";
+import { RewardCouponsService } from "./reward-coupons.service";
 import {
   RewardOutput,
   RewardsService,
@@ -87,9 +90,13 @@ export class RewardsController {
 }
 @Controller("api/user/rewards")
 export class UserRewardsController {
-  constructor(private readonly service: RewardsService) {}
+  constructor(
+    private readonly service: RewardsService,
+    private readonly coupons: RewardCouponsService,
+  ) {}
 
   @Get()
+  @Header("Cache-Control", "private, no-store")
   async list(
     @CurrentUser() user: User,
   ): Promise<ApiResponse<UserRewardOutput[]>> {
@@ -98,6 +105,7 @@ export class UserRewardsController {
   }
 
   @Post(":id/redeem")
+  @Header("Cache-Control", "private, no-store")
   async redeem(
     @Param("id", ParseIntPipe) id: number,
     @Headers("idempotency-key") idempotencyKey: string | undefined,
@@ -112,11 +120,26 @@ export class UserRewardsController {
   }
 
   @Patch(":id")
+  @Header("Cache-Control", "private, no-store")
   async use(
     @Param("id", ParseIntPipe) id: number,
     @CurrentUser() user: User,
   ): Promise<ApiResponse<UserRewardOutput>> {
     const result = await this.service.use(user.id, id);
     return success(result, "보상이 성공적으로 사용 완료되었습니다.");
+  }
+
+  @Get(":id/coupon-image")
+  @Header("Cache-Control", "private, no-store")
+  @Header("X-Content-Type-Options", "nosniff")
+  async couponImage(
+    @Param("id", ParseIntPipe) id: number,
+    @CurrentUser() user: User,
+  ): Promise<StreamableFile> {
+    const result = await this.coupons.ownerImage(user.id, id);
+    return new StreamableFile(result.body, {
+      type: result.contentType,
+      disposition: "inline",
+    });
   }
 }

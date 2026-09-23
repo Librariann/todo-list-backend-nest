@@ -16,6 +16,7 @@ import { PointsService } from "../points/points.service";
 import type { CreateRewardDto } from "./dto/create-rewards.dto";
 import type { ReorderRewardsDto } from "./dto/reorder-rewards.dto";
 import type { UpdateRewardDto } from "./dto/update-rewards.dto";
+import { RewardCouponsService } from "./reward-coupons.service";
 
 export interface RewardOutput {
   id: number;
@@ -47,6 +48,9 @@ export interface UserRewardOutput {
   discountRate: number;
   isUsed: boolean;
   imageUrl: string | null;
+  couponCode: string | null;
+  couponImageUrl: string | null;
+  expiresAt: Date | null;
 }
 
 function rewardResponse(reward: Reward): RewardOutput {
@@ -69,7 +73,12 @@ function rewardResponse(reward: Reward): RewardOutput {
   };
 }
 
-function userRewardResponse(reward: UserReward): UserRewardOutput {
+export type UserRewardSummaryOutput = Omit<
+  UserRewardOutput,
+  "couponCode" | "couponImageUrl" | "expiresAt"
+>;
+
+function userRewardSnapshot(reward: UserReward): UserRewardSummaryOutput {
   return {
     id: reward.id,
     createdAt: reward.createdAt,
@@ -82,6 +91,15 @@ function userRewardResponse(reward: UserReward): UserRewardOutput {
     discountRate: reward.discountRate,
     isUsed: reward.isUsed,
     imageUrl: reward.rewardImageUrl,
+  };
+}
+
+function userRewardResponse(reward: UserReward): UserRewardOutput {
+  return {
+    ...userRewardSnapshot(reward),
+    couponCode: null,
+    couponImageUrl: null,
+    expiresAt: null,
   };
 }
 
@@ -101,13 +119,14 @@ export class RewardsService {
     private readonly owned: Repository<UserReward>,
     private readonly points: PointsService,
     private readonly dataSource: DataSource,
+    private readonly coupons: RewardCouponsService,
   ) {}
   async list(): Promise<RewardOutput[]> {
     const result = await this.rewards.find({
       where: { isActive: true },
       order: { sortOrder: "ASC", id: "ASC" },
     });
-    return result.map(rewardResponse);
+    return this.rewardOutputs(result);
   }
 
   async reorder(dto: ReorderRewardsDto): Promise<RewardOutput[]> {
@@ -143,7 +162,7 @@ export class RewardsService {
         where: { id: In(rewardIds) },
         order: { sortOrder: "ASC", id: "ASC" },
       });
-      return result.map(rewardResponse);
+      return this.rewardOutputs(result, manager);
     });
   }
   async get(id: number): Promise<RewardOutput> {
@@ -152,7 +171,7 @@ export class RewardsService {
       throw new NotFoundException("보상을 찾을 수 없습니다.");
     }
 
-    return rewardResponse(reward);
+    return (await this.rewardOutputs([reward]))[0];
   }
 
   async create(dto: CreateRewardDto): Promise<RewardOutput> {
@@ -174,10 +193,14 @@ export class RewardsService {
           imageUrl: imageUrl?.trim() || null,
           availableFrom: availableFrom ? new Date(availableFrom) : null,
           sortOrder: sortOrder + 1,
+          stockQuantity:
+            (values.type ?? RewardType.COUPON) === RewardType.COUPON
+              ? 0
+              : (values.stockQuantity ?? 0),
         }),
       );
 
-      return rewardResponse(result);
+      return (await this.rewardOutputs([result], manager))[0];
     });
   }
 
@@ -196,6 +219,8 @@ export class RewardsService {
 
     const { imageUrl, availableFrom, ...values } = dto;
     const changes: Partial<Reward> = { ...values };
+    if ((dto.type ?? reward.type) === RewardType.COUPON)
+      delete changes.stockQuantity;
 
     if ("imageUrl" in dto) {
       changes.imageUrl = imageUrl?.trim() || null;
@@ -209,7 +234,7 @@ export class RewardsService {
       await this.rewards.update({ id }, changes);
     }
     const result = await this.rewards.findOneByOrFail({ id });
-    return rewardResponse(result);
+    return (await this.rewardOutputs([result]))[0];
   }
 
   async remove(id: number): Promise<RewardOutput> {
@@ -221,13 +246,30 @@ export class RewardsService {
 
     await this.rewards.update({ id }, { isActive: false });
     const result = await this.rewards.findOneByOrFail({ id });
-    return rewardResponse(result);
+    return (await this.rewardOutputs([result]))[0];
   }
 
   async userList(userId: number): Promise<UserRewardOutput[]> {
-    return (
-      await this.owned.find({ where: { userId }, order: { createdAt: "DESC" } })
-    ).map(userRewardResponse);
+    const items = await this.owned.find({
+      where: { userId },
+      order: { createdAt: "DESC" },
+    });
+    const coupons = await this.coupons.ownerDetails(
+      userId,
+      items.map((item) => item.id),
+    );
+    return items.map((item) => ({
+      ...userRewardResponse(item),
+      ...coupons.get(Number(item.id)),
+    }));
+  }
+
+  async userSummaryList(userId: number): Promise<UserRewardSummaryOutput[]> {
+    const items = await this.owned.find({
+      where: { userId },
+      order: { createdAt: "DESC" },
+    });
+    return items.map(userRewardSnapshot);
   }
 
   async redeem(
@@ -251,7 +293,7 @@ export class RewardsService {
         idempotencyKey,
       });
 
-      if (existing && existing.rewardId !== rewardId) {
+      if (existing && Number(existing.rewardId) !== Number(rewardId)) {
         throw new ConflictException(
           "이미 다른 보상 교환에 사용된 요청 키입니다.",
         );
@@ -279,9 +321,10 @@ export class RewardsService {
         throw new BadRequestException("아직 교환이 시작되지 않은 보상입니다.");
       }
 
-      if (reward.type === RewardType.COUPON && reward.stockQuantity <= 0) {
-        throw new BadRequestException("준비된 쿠폰이 모두 소진되었습니다.");
-      }
+      const coupon =
+        reward.type === RewardType.COUPON
+          ? await this.coupons.reserve(manager, rewardId)
+          : null;
 
       const purchasePoint = rewardPurchasePoint(reward);
       const totalPoint = await this.points.total(userId, manager);
@@ -300,11 +343,6 @@ export class RewardsService {
           userRewardId: null,
         }),
       );
-
-      if (reward.type === RewardType.COUPON) {
-        reward.stockQuantity -= 1;
-        await rewards.save(reward);
-      }
 
       await this.points.debitReward(
         userId,
@@ -329,11 +367,15 @@ export class RewardsService {
         }),
       );
 
+      const couponDetails = coupon
+        ? await this.coupons.assign(manager, coupon, userId, item.id)
+        : null;
+
       redemption.userRewardId = item.id;
       redemption.status = RewardRedemptionStatus.COMPLETED;
       await redemptions.save(redemption);
 
-      return userRewardResponse(item);
+      return { ...userRewardResponse(item), ...couponDetails };
     });
   }
 
@@ -357,22 +399,49 @@ export class RewardsService {
       throw new ConflictException("기존 보상 교환 결과를 찾을 수 없습니다.");
     }
 
-    return userRewardResponse(item);
+    const coupons = await this.coupons.ownerDetails(
+      redemption.userId,
+      [item.id],
+      manager,
+    );
+    return { ...userRewardResponse(item), ...coupons.get(Number(item.id)) };
   }
 
   async use(userId: number, id: number): Promise<UserRewardOutput> {
-    const item = await this.owned.findOneBy({ id, userId });
+    return this.dataSource.transaction(async (manager) => {
+      const owned = manager.getRepository(UserReward);
+      const item = await owned.findOne({
+        where: { id, userId },
+        lock: { mode: "pessimistic_write" },
+      });
+      if (!item) throw new NotFoundException(`보상을 찾을 수 없습니다: ${id}`);
+      if (item.isUsed) throw new BadRequestException("이미 사용된 보상입니다.");
+      await this.coupons.markUsed(manager, userId, id);
+      await owned.update({ id, userId }, { isUsed: true });
+      const coupons = await this.coupons.ownerDetails(userId, [id], manager);
+      return {
+        ...userRewardResponse({ ...item, isUsed: true }),
+        ...coupons.get(Number(id)),
+      };
+    });
+  }
 
-    if (!item) {
-      throw new NotFoundException(`보상을 찾을 수 없습니다: ${id}`);
-    }
-
-    if (item.isUsed) {
-      throw new BadRequestException("이미 사용된 보상입니다.");
-    }
-
-    item.isUsed = true;
-
-    return userRewardResponse(await this.owned.save(item));
+  private async rewardOutputs(
+    rewards: Reward[],
+    manager?: EntityManager,
+  ): Promise<RewardOutput[]> {
+    const counts = await this.coupons.availableCounts(
+      rewards
+        .filter((reward) => reward.type === RewardType.COUPON)
+        .map((reward) => reward.id),
+      manager,
+    );
+    return rewards.map((reward) => ({
+      ...rewardResponse(reward),
+      stockQuantity:
+        reward.type === RewardType.COUPON
+          ? (counts.get(Number(reward.id)) ?? 0)
+          : reward.stockQuantity,
+    }));
   }
 }

@@ -33,6 +33,7 @@ function reward(overrides: Partial<Reward> = {}): Reward {
 }
 
 function setupRedeem(options?: {
+  hasStock?: boolean;
   balance?: number;
   existing?: RewardRedemption | null;
   reward?: Reward | null;
@@ -112,11 +113,29 @@ function setupRedeem(options?: {
     total: jest.fn(() => Promise.resolve(options?.balance ?? 900)),
     debitReward: jest.fn(() => Promise.resolve()),
   };
+  const couponService = {
+    reserve: jest.fn(() =>
+      options?.hasStock === false
+        ? Promise.reject(
+            new BadRequestException("준비된 쿠폰이 모두 소진되었습니다."),
+          )
+        : Promise.resolve({ id: 21 }),
+    ),
+    assign: jest.fn(() =>
+      Promise.resolve({
+        couponCode: "123456789012",
+        couponImageUrl: "/api/user/rewards/8/coupon-image",
+        expiresAt: new Date("2099-01-01"),
+      }),
+    ),
+    ownerDetails: jest.fn(() => Promise.resolve(new Map())),
+  };
   const service = new RewardsService(
     {} as never,
     {} as never,
     points as never,
     dataSource as never,
+    couponService as never,
   );
 
   return {
@@ -130,6 +149,7 @@ function setupRedeem(options?: {
     ownedSave,
     ownedFind,
     points,
+    couponService,
   };
 }
 
@@ -169,9 +189,7 @@ describe("RewardsService", () => {
       where: { id: 3, isActive: true },
       lock: { mode: "pessimistic_write" },
     });
-    expect(rewardSave).toHaveBeenCalledWith(
-      expect.objectContaining({ stockQuantity: 1 }),
-    );
+    expect(rewardSave).not.toHaveBeenCalled();
     expect(redemptionCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         userId: 1,
@@ -190,6 +208,8 @@ describe("RewardsService", () => {
       expect.objectContaining({ rewardPoint: 850 }),
     );
     expect(result.point).toBe(850);
+    expect(result.couponCode).toBe("123456789012");
+    expect(result.couponImageUrl).toBe("/api/user/rewards/8/coupon-image");
   });
 
   it("returns the existing result without charging the same request twice", async () => {
@@ -202,9 +222,10 @@ describe("RewardsService", () => {
       status: RewardRedemptionStatus.COMPLETED,
       userRewardId: 8,
     } as RewardRedemption;
-    const { service, points, redemptionSave, ownedFind } = setupRedeem({
-      existing,
-    });
+    const { service, points, redemptionSave, ownedFind, couponService } =
+      setupRedeem({
+        existing,
+      });
 
     const result = await service.redeem(1, 3, IDEMPOTENCY_KEY);
 
@@ -213,6 +234,8 @@ describe("RewardsService", () => {
     expect(points.total).not.toHaveBeenCalled();
     expect(points.debitReward).not.toHaveBeenCalled();
     expect(redemptionSave).not.toHaveBeenCalled();
+    expect(couponService.reserve).not.toHaveBeenCalled();
+    expect(couponService.assign).not.toHaveBeenCalled();
   });
 
   it("rejects reuse of an idempotency key for another reward", async () => {
@@ -250,7 +273,8 @@ describe("RewardsService", () => {
 
   it("rejects redemption when coupon stock is exhausted", async () => {
     const { service, rewardSave, ownedSave, points } = setupRedeem({
-      reward: reward({ stockQuantity: 0 }),
+      hasStock: false,
+      reward: reward({ stockQuantity: 999 }),
     });
 
     await expect(service.redeem(1, 3, IDEMPOTENCY_KEY)).rejects.toThrow(
