@@ -20,7 +20,7 @@ export class SummaryController {
     const [points, rewards, achievedChallenges] = await Promise.all([
       this.points.total(user.id),
       this.rewards.userSummaryList(user.id),
-      this.challenges.achieved(user.id),
+      this.challenges.getAchievedByUserId(user.id),
     ]);
     return success(
       { points, rewards, achievedChallenges },
