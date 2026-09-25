@@ -161,7 +161,7 @@ export class HabitsService {
       const streaks = manager.getRepository(HabitStreak);
       const habit = await habits.findOne({
         where: { id, userId },
-        lock: { mode: "pessimistic_write" },
+        lock: { mode: "pessimistic_write" }, //TODO: 이 락이 뭘하는지 알아 볼 것
       });
 
       if (!habit) {
