@@ -89,6 +89,7 @@ const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferencesOutput = {
   timezone: "Asia/Seoul",
 };
 
+//TODO:이거랑 daily-todo-reminder.service랑 무슨 차이지??
 @Injectable()
 export class PushService {
   private readonly logger = new Logger(PushService.name);
@@ -270,6 +271,7 @@ export class PushService {
       if (newDeliveries.length > 0) {
         await this.deliveries.save(newDeliveries);
       }
+
       if (disabledDevices.length > 0) {
         await this.devices.save(disabledDevices);
       }
