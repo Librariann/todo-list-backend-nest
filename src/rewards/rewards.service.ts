@@ -306,7 +306,7 @@ export class RewardsService {
       const rewards = manager.getRepository(Reward);
       const reward = await rewards.findOne({
         where: { id: rewardId, isActive: true },
-        lock: { mode: "pessimistic_write" },
+        lock: { mode: "pessimistic_write" }, //TODO:이 락이 어떻게 작동하는지 추후 물어 볼 것
       });
 
       if (!reward) {
