@@ -5,12 +5,12 @@ import {
   BadRequestException,
 } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
-import { DataSource, Repository } from "typeorm";
+import { Between, DataSource, Repository } from "typeorm";
 import {
   ChallengeAchievementOutput,
   ChallengesService,
 } from "../challenges/challenges.service";
-import { today } from "../common/date";
+import { isValidDateString, today } from "../common/date";
 import { WorkType } from "../entities/challenge.entity";
 import { Todo, TodoStatus } from "../entities/todo.entity";
 import type { CreateTodoDto } from "./dto/create-todos.dto";
@@ -60,6 +60,26 @@ export class TodosService {
     });
 
     return todos.map(todoResponse);
+  }
+
+  async markedDates(
+    userId: number,
+    from: string,
+    to: string,
+  ): Promise<string[]> {
+    if (!isValidDateString(from) || !isValidDateString(to) || from > to) {
+      throw new BadRequestException(
+        "조회 기간은 올바른 YYYY-MM-DD 범위여야 합니다.",
+      );
+    }
+
+    const todos = await this.todos.find({
+      select: { targetDate: true },
+      where: { userId, targetDate: Between(from, to) },
+      order: { targetDate: "ASC" },
+    });
+
+    return [...new Set(todos.map((todo) => todo.targetDate))];
   }
 
   async create(userId: number, dto: CreateTodoDto): Promise<TodoOutput> {
@@ -140,23 +160,32 @@ export class TodosService {
         where: { id, userId },
         lock: { mode: "pessimistic_write" },
       });
+
       if (!todo) {
         throw new NotFoundException(`할 일을 찾을 수 없습니다: ${id}`);
       }
+
       if (todo.targetDate < today()) {
         throw new BadRequestException(
           "마감된 할 일은 상태를 변경할 수 없습니다.",
         );
       }
+
       if (todo.targetDate > today() && status === TodoStatus.DONE) {
         throw new BadRequestException(
           "예정된 할 일은 해당 날짜에 완료할 수 있습니다.",
         );
       }
-      if (todo.status === status) return;
 
-      const completionChanged =
-        (todo.status === TodoStatus.DONE) !== (status === TodoStatus.DONE);
+      //DB에 저장된 유저의 상태와 현재 상태가 동일 할 경우 ealry return
+      if (todo.status === status) {
+        return;
+      }
+
+      const userSavedStatus = todo.status === TodoStatus.DONE;
+      const userCurrentStatus = status === TodoStatus.DONE;
+
+      const completionChanged = userSavedStatus !== userCurrentStatus;
       todo.status = status;
       await todos.save(todo);
 
