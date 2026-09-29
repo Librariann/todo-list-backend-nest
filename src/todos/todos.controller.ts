@@ -7,6 +7,7 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Query,
 } from "@nestjs/common";
 import { CurrentUser } from "../auth/current-user.decorator";
 import { ApiResponse, success } from "../common/api-response";
@@ -20,6 +21,16 @@ import { TodoOutput, TodoStatusOutput, TodosService } from "./todos.service";
 @Controller("api/todos")
 export class TodosController {
   constructor(private readonly service: TodosService) {}
+
+  @Get("calendar")
+  async calendar(
+    @Query("from") from: string,
+    @Query("to") to: string,
+    @CurrentUser() user: User,
+  ): Promise<ApiResponse<string[]>> {
+    const result = await this.service.markedDates(user.id, from, to);
+    return success(result, "할 일이 등록된 날짜를 성공적으로 불러왔습니다.");
+  }
 
   @Get(":date")
   async list(
