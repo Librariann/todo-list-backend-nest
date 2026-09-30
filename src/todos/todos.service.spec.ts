@@ -111,3 +111,36 @@ describe("TodosService.status", () => {
     expect(recalculateProgress).not.toHaveBeenCalled();
   });
 });
+
+describe("TodosService.markedDates", () => {
+  it("returns unique dates that have todos in the requested range", async () => {
+    const find = jest.fn(() =>
+      Promise.resolve([
+        todo(TodoStatus.READY, "2026-10-03"),
+        todo(TodoStatus.DONE, "2026-10-03"),
+        todo(TodoStatus.READY, "2026-10-18"),
+      ]),
+    );
+    const service = new TodosService(
+      { find } as never,
+      {} as never,
+      {} as never,
+    );
+
+    await expect(
+      service.markedDates(7, "2026-10-01", "2026-10-31"),
+    ).resolves.toEqual(["2026-10-03", "2026-10-18"]);
+    expect(find).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects an invalid or reversed date range", async () => {
+    const service = new TodosService({} as never, {} as never, {} as never);
+
+    await expect(
+      service.markedDates(7, "2026-10-31", "2026-10-01"),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      service.markedDates(7, "2026-10-01", "2026-10-99"),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
