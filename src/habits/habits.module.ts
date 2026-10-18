@@ -11,5 +11,6 @@ import { HabitsService } from "./habits.service";
   ],
   controllers: [HabitsController],
   providers: [HabitsService],
+  exports: [HabitsService],
 })
 export class HabitsModule {}
