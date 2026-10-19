@@ -1,5 +1,6 @@
 import {
   IsDateString,
+  IsOptional,
   IsString,
   Matches,
   MaxLength,
@@ -17,4 +18,11 @@ export class CreateTodoDto {
     message: "할 일 날짜는 YYYY-MM-DD 형식이어야 합니다.",
   })
   targetDate: string;
+
+  @IsOptional()
+  @IsDateString({ strict: true }, { message: "알림 시간을 확인해주세요." })
+  @Matches(/T.*(?:Z|[+-]\d{2}:\d{2})$/, {
+    message: "알림 시간에 시간대가 필요합니다.",
+  })
+  reminderAt?: string | null;
 }
