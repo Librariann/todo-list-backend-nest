@@ -5,7 +5,7 @@ import {
   BadRequestException,
 } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
-import { Between, DataSource, Repository } from "typeorm";
+import { Between, DataSource, EntityManager, Repository } from "typeorm";
 import {
   ChallengeAchievementOutput,
   ChallengesService,
@@ -26,6 +26,7 @@ export interface TodoOutput {
   status: TodoStatus;
   orderIndex: number;
   targetDate: string;
+  reminderAt: Date | null;
 }
 
 export interface TodoStatusOutput {
@@ -42,7 +43,22 @@ function todoResponse(todo: Todo): TodoOutput {
     status: todo.status,
     orderIndex: todo.orderIndex,
     targetDate: todo.targetDate,
+    reminderAt: todo.reminderAt ?? null,
   };
+}
+
+function parseReminderAt(value: string | null | undefined): Date | null {
+  if (value == null) return null;
+  const reminderAt = new Date(value);
+  if (
+    !Number.isFinite(reminderAt.getTime()) ||
+    reminderAt.getTime() <= Date.now()
+  ) {
+    throw new BadRequestException(
+      "지금보다 나중 시간으로 알림을 설정해주세요.",
+    );
+  }
+  return reminderAt;
 }
 
 @Injectable()
@@ -82,7 +98,12 @@ export class TodosService {
     return [...new Set(todos.map((todo) => todo.targetDate))];
   }
 
-  async create(userId: number, dto: CreateTodoDto): Promise<TodoOutput> {
+  async create(
+    userId: number,
+    dto: CreateTodoDto,
+    manager?: EntityManager,
+  ): Promise<TodoOutput> {
+    const todos = manager?.getRepository(Todo) ?? this.todos;
     const { name, targetDate } = dto;
     if (targetDate < today()) {
       throw new BadRequestException(
@@ -90,23 +111,24 @@ export class TodosService {
       );
     }
 
-    const exists = await this.todos.exists({
+    const exists = await todos.exists({
       where: { userId, name, targetDate },
     });
     if (exists) {
       throw new ConflictException(`이미 사용중인 할 일 입니다: ${name}`);
     }
 
-    const latest = await this.todos.findOne({
+    const latest = await todos.findOne({
       where: { userId, targetDate },
       order: { orderIndex: "DESC" },
     });
 
-    const todo = await this.todos.save(
-      this.todos.create({
+    const todo = await todos.save(
+      todos.create({
         userId,
         name,
         targetDate,
+        reminderAt: parseReminderAt(dto.reminderAt),
         status: TodoStatus.READY,
         orderIndex: (latest?.orderIndex ?? 0) + 1,
       }),
@@ -143,8 +165,31 @@ export class TodosService {
       }
     }
 
-    Object.assign(todo, dto);
-    return todoResponse(await this.todos.save(todo));
+    const { reminderAt, ...changes } = dto;
+    const update: Partial<Todo> = { ...changes };
+    if (reminderAt !== undefined) {
+      update.reminderAt = parseReminderAt(reminderAt);
+    }
+    if (Object.keys(update).length > 0) {
+      const query = this.todos
+        .createQueryBuilder()
+        .update()
+        .set(update)
+        .where({ id, userId });
+      if (update.reminderAt) {
+        query.andWhere("status <> :done", { done: TodoStatus.DONE });
+      }
+      const result = await query.execute();
+      if (result.affected === 0 && update.reminderAt) {
+        const current = await this.owned(userId, id);
+        if (current.status === TodoStatus.DONE) {
+          throw new BadRequestException(
+            "완료한 할 일에는 알림을 예약할 수 없어요.",
+          );
+        }
+      }
+    }
+    return todoResponse(await this.owned(userId, id));
   }
 
   async status(
@@ -187,6 +232,7 @@ export class TodosService {
 
       const completionChanged = userSavedStatus !== userCurrentStatus;
       todo.status = status;
+      if (status === TodoStatus.DONE) todo.reminderAt = null;
       await todos.save(todo);
 
       if (completionChanged) {
