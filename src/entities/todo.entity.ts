@@ -1,4 +1,4 @@
-import { Column, Entity, JoinColumn, ManyToOne } from "typeorm";
+import { Column, Entity, Index, JoinColumn, ManyToOne } from "typeorm";
 import { BaseEntity } from "./base.entity";
 import { User } from "./user.entity";
 
@@ -8,6 +8,9 @@ export enum TodoStatus {
   DONE = "DONE",
 }
 @Entity({ name: "todos", schema: "todo_list" })
+@Index("idx_todos_pending_reminders", ["reminderAt"], {
+  where: "reminder_at IS NOT NULL",
+})
 export class Todo extends BaseEntity {
   @ManyToOne(() => User, { nullable: false })
   @JoinColumn({ name: "user_id" })
@@ -27,4 +30,7 @@ export class Todo extends BaseEntity {
 
   @Column({ name: "target_date", type: "date" })
   targetDate: string;
+
+  @Column({ name: "reminder_at", type: "timestamptz", nullable: true })
+  reminderAt: Date | null;
 }
