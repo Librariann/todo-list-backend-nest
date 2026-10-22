@@ -63,11 +63,13 @@ describe("TodosService.status", () => {
 
   it("syncs challenge progress when a todo is completed", async () => {
     const entity = todo();
+    entity.reminderAt = new Date("2026-08-24T13:00:00+09:00");
     const { service, manager, save, recalculateProgress } = setup(entity);
 
     const result = await service.status(7, 5, TodoStatus.DONE);
 
     expect(entity.status).toBe(TodoStatus.DONE);
+    expect(entity.reminderAt).toBeNull();
     expect(save).toHaveBeenCalledWith(entity);
     expect(recalculateProgress).toHaveBeenCalledWith(
       7,
