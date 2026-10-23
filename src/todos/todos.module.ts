@@ -8,5 +8,6 @@ import { TodosService } from "./todos.service";
   imports: [TypeOrmModule.forFeature([Todo]), ChallengesModule],
   controllers: [TodosController],
   providers: [TodosService],
+  exports: [TodosService],
 })
 export class TodosModule {}
