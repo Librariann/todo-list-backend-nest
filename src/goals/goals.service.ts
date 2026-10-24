@@ -181,12 +181,19 @@ export class GoalsService {
     private readonly dataSource: DataSource,
   ) {}
 
-  async create(userId: number, dto: CreateGoalDto): Promise<GoalOutput> {
+  async create(
+    userId: number,
+    dto: CreateGoalDto,
+    manager?: EntityManager,
+  ): Promise<GoalOutput> {
+    const goals = manager?.getRepository(Goal) ?? this.goals;
+    const processes = manager?.getRepository(GoalProcess) ?? this.processes;
+    const streaks = manager?.getRepository(GoalStreak) ?? this.streaks;
     if (dto.startDate < today()) {
       throw new BadRequestException("지난 날짜에는 목표를 생성할 수 없습니다.");
     }
 
-    const exists = await this.goals.exists({
+    const exists = await goals.exists({
       where: { userId, name: dto.name, isActive: true },
     });
 
@@ -196,8 +203,8 @@ export class GoalsService {
       );
     }
 
-    const goal = await this.goals.save(
-      this.goals.create({
+    const goal = await goals.save(
+      goals.create({
         ...dto,
         userId,
         description: dto.description ?? null,
@@ -205,8 +212,8 @@ export class GoalsService {
       }),
     );
 
-    await this.processes.save(
-      this.processes.create({
+    await processes.save(
+      processes.create({
         goalId: goal.id,
         userId,
         periodIndex: 1,
@@ -223,8 +230,8 @@ export class GoalsService {
       }),
     );
 
-    await this.streaks.save(
-      this.streaks.create({
+    await streaks.save(
+      streaks.create({
         goalId: goal.id,
         userId,
         currentStreak: 0,
@@ -245,7 +252,11 @@ export class GoalsService {
     return result;
   }
 
-  async markedDates(userId: number, from: string, to: string): Promise<string[]> {
+  async markedDates(
+    userId: number,
+    from: string,
+    to: string,
+  ): Promise<string[]> {
     if (!isValidDateString(from) || !isValidDateString(to) || from > to) {
       throw new BadRequestException(
         "조회 기간은 올바른 YYYY-MM-DD 범위여야 합니다.",
