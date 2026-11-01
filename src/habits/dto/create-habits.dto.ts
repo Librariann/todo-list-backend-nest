@@ -1,6 +1,7 @@
 import { IsInt, IsOptional, IsString, MaxLength, Min } from "class-validator";
+import { HabitReminderDto } from "./habit-reminder.dto";
 
-export class CreateHabitDto {
+export class CreateHabitDto extends HabitReminderDto {
   @IsString()
   @MaxLength(50)
   name: string;
