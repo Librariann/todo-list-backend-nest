@@ -19,6 +19,7 @@ import { HealthModule } from "./health/health.module";
 import { NoticesModule } from "./notices/notices.module";
 import { PointsModule } from "./points/points.module";
 import { PushModule } from "./push/push.module";
+import { RecommendationsModule } from "./recommendations/recommendations.module";
 import { RewardsModule } from "./rewards/rewards.module";
 import { SummaryModule } from "./summary/summary.module";
 import { TodosModule } from "./todos/todos.module";
@@ -106,6 +107,7 @@ const HEALTH_PATHS = new Set(["/health", "/health/detail"]);
     GoalsModule,
     RewardsModule,
     SummaryModule,
+    RecommendationsModule,
   ],
   providers: [
     { provide: APP_GUARD, useExisting: JwtAuthGuard },
