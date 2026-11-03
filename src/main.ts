@@ -23,7 +23,7 @@ async function bootstrap() {
       "X-Request-Id",
       "Idempotency-Key",
     ],
-    exposedHeaders: ["X-Request-Id"],
+    exposedHeaders: ["X-Request-Id", "Retry-After"],
     credentials: true,
     maxAge: 3600,
   });
