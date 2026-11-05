@@ -1,10 +1,14 @@
 import {
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
   BadRequestException,
+  type OnApplicationBootstrap,
 } from "@nestjs/common";
+import { Cron } from "@nestjs/schedule";
 import { InjectRepository } from "@nestjs/typeorm";
+import { randomUUID } from "node:crypto";
 import { Between, DataSource, EntityManager, Repository } from "typeorm";
 import {
   ChallengeAchievementOutput,
@@ -13,6 +17,7 @@ import {
 import { isValidDateString, today } from "../common/date";
 import { WorkType } from "../entities/challenge.entity";
 import { Todo, TodoStatus } from "../entities/todo.entity";
+import { localClock } from "../push/reminder-time";
 import type { CreateTodoDto } from "./dto/create-todos.dto";
 import type { ReorderTodoDto } from "./dto/reorder-todos.dto";
 import type { UpdateTodoDto } from "./dto/update-todos.dto";
@@ -27,6 +32,8 @@ export interface TodoOutput {
   orderIndex: number;
   targetDate: string;
   reminderAt: Date | null;
+  repeatDaily: boolean;
+  repeatReminderTime: string | null;
 }
 
 export interface TodoStatusOutput {
@@ -34,6 +41,7 @@ export interface TodoStatusOutput {
 }
 
 function todoResponse(todo: Todo): TodoOutput {
+  const repeatDaily = todo.repeatDaily === true;
   return {
     id: todo.id,
     createdAt: todo.createdAt,
@@ -44,6 +52,8 @@ function todoResponse(todo: Todo): TodoOutput {
     orderIndex: todo.orderIndex,
     targetDate: todo.targetDate,
     reminderAt: todo.reminderAt ?? null,
+    repeatDaily,
+    repeatReminderTime: repeatDaily ? (todo.reminderTime ?? null) : null,
   };
 }
 
@@ -61,15 +71,90 @@ function parseReminderAt(value: string | null | undefined): Date | null {
   return reminderAt;
 }
 
+const KOREAN_TIMEZONE = "Asia/Seoul";
+
+function reminderClock(reminderAt: Date | null): string | null {
+  return reminderAt ? localClock(reminderAt, KOREAN_TIMEZONE).time : null;
+}
+
 @Injectable()
-export class TodosService {
+export class TodosService implements OnApplicationBootstrap {
+  private readonly logger = new Logger(TodosService.name);
+
   constructor(
     @InjectRepository(Todo) private readonly todos: Repository<Todo>,
     private readonly challenges: ChallengesService,
     private readonly dataSource: DataSource,
   ) {}
 
+  onApplicationBootstrap(): void {
+    void this.runDailyRepeatSchedule();
+  }
+
+  @Cron("0 * * * * *", {
+    name: "daily-todo-repeats",
+    timeZone: KOREAN_TIMEZONE,
+    waitForCompletion: true,
+  })
+  async runDailyRepeatSchedule(): Promise<void> {
+    try {
+      await this.materializeDailyRepeats();
+    } catch (error) {
+      this.logger.error("반복 할 일을 생성하지 못했습니다.", error);
+    }
+  }
+
+  async materializeDailyRepeats(
+    now = new Date(),
+    userId?: number,
+  ): Promise<void> {
+    // Claim the active occurrence and create today's successor in one statement.
+    // An outage skips missed dates without dropping the repeating schedule.
+    await this.dataSource.query(
+      `
+      WITH candidates AS (
+        SELECT id FROM todo_list.todos
+        WHERE repeat_daily AND target_date < $1::date
+          ${userId === undefined ? "" : "AND user_id = $3"}
+        ORDER BY id
+        FOR UPDATE
+      ), advanced AS (
+        UPDATE todo_list.todos current
+        SET repeat_daily = FALSE
+        FROM candidates
+        WHERE current.id = candidates.id
+        RETURNING current.id, user_id, name, repeat_series_id, reminder_time
+      ), planned AS (
+        SELECT advanced.*,
+               ($1::date + reminder_time::time) AT TIME ZONE 'Asia/Seoul'
+                 AS next_reminder_at,
+               COALESCE((
+                 SELECT MAX(order_index) FROM todo_list.todos existing
+                 WHERE existing.user_id = advanced.user_id
+                   AND existing.target_date = $1::date
+               ), 0) + ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY id)
+                 AS next_order_index
+        FROM advanced
+      )
+      INSERT INTO todo_list.todos (
+        user_id, name, status, order_index, target_date, reminder_at,
+        reminder_time, repeat_series_id, repeat_daily
+      )
+      SELECT user_id, name, 'READY', next_order_index, $1::date,
+             CASE WHEN next_reminder_at >= $2::timestamptz - INTERVAL '5 minutes'
+                  THEN next_reminder_at END,
+             reminder_time, repeat_series_id, TRUE
+      FROM planned
+      `,
+      userId === undefined ? [today(now), now] : [today(now), now, userId],
+    );
+  }
+
   async list(userId: number, targetDate: string): Promise<TodoOutput[]> {
+    const now = new Date();
+    if (targetDate === today(now)) {
+      await this.materializeDailyRepeats(now, userId);
+    }
     const todos = await this.todos.find({
       where: { userId, targetDate },
       order: { orderIndex: "DESC" },
@@ -89,6 +174,12 @@ export class TodosService {
       );
     }
 
+    const now = new Date();
+    const currentDate = today(now);
+    if (from <= currentDate && currentDate <= to) {
+      await this.materializeDailyRepeats(now, userId);
+    }
+
     const todos = await this.todos.find({
       select: { targetDate: true },
       where: { userId, targetDate: Between(from, to) },
@@ -105,10 +196,15 @@ export class TodosService {
   ): Promise<TodoOutput> {
     const todos = manager?.getRepository(Todo) ?? this.todos;
     const { name, targetDate } = dto;
-    if (targetDate < today()) {
+    const now = new Date();
+    const currentDate = today(now);
+    if (targetDate < currentDate) {
       throw new BadRequestException(
         "지난 날짜에는 할 일을 생성할 수 없습니다.",
       );
+    }
+    if (!manager && targetDate === currentDate) {
+      await this.materializeDailyRepeats(now, userId);
     }
 
     const exists = await todos.exists({
@@ -123,12 +219,14 @@ export class TodosService {
       order: { orderIndex: "DESC" },
     });
 
+    const reminderAt = parseReminderAt(dto.reminderAt);
     const todo = await todos.save(
       todos.create({
         userId,
         name,
         targetDate,
-        reminderAt: parseReminderAt(dto.reminderAt),
+        reminderAt,
+        reminderTime: reminderClock(reminderAt),
         status: TodoStatus.READY,
         orderIndex: (latest?.orderIndex ?? 0) + 1,
       }),
@@ -142,54 +240,65 @@ export class TodosService {
     id: number,
     dto: UpdateTodoDto,
   ): Promise<TodoOutput> {
-    const todo = await this.owned(userId, id);
-
-    if (dto.name) {
-      const duplicated = await this.todos
-        .createQueryBuilder("t")
-        .where(
-          "t.name = :name AND t.user_id = :userId AND t.target_date = :targetDate AND t.id != :id",
-          {
-            name: dto.name,
-            userId,
-            targetDate: dto.targetDate ?? todo.targetDate,
-            id,
-          },
-        )
-        .getExists();
-
-      if (duplicated) {
-        throw new ConflictException(
-          `이미 사용중인 할 일명 입니다: ${dto.name}`,
+    const now = new Date();
+    await this.materializeDailyRepeats(now, userId);
+    return this.dataSource.transaction(async (manager) => {
+      const todos = manager.getRepository(Todo);
+      const todo = await this.lockOwned(todos, userId, id);
+      const { name, targetDate, repeatDaily, reminderAt } = dto;
+      if (repeatDaily !== undefined && todo.targetDate < today(now)) {
+        throw new BadRequestException(
+          "지난 날짜의 할 일은 반복 설정을 변경할 수 없어요.",
         );
       }
-    }
 
-    const { reminderAt, ...changes } = dto;
-    const update: Partial<Todo> = { ...changes };
-    if (reminderAt !== undefined) {
-      update.reminderAt = parseReminderAt(reminderAt);
-    }
-    if (Object.keys(update).length > 0) {
-      const query = this.todos
-        .createQueryBuilder()
-        .update()
-        .set(update)
-        .where({ id, userId });
-      if (update.reminderAt) {
-        query.andWhere("status <> :done", { done: TodoStatus.DONE });
+      const dateChanged = targetDate && targetDate !== todo.targetDate;
+      if (dateChanged) {
+        if (todo.repeatDaily || repeatDaily === true) {
+          throw new BadRequestException(
+            "매일 반복 중인 할 일의 날짜는 변경할 수 없어요.",
+          );
+        }
+        todo.repeatSeriesId = null;
+        todo.targetDate = targetDate;
       }
-      const result = await query.execute();
-      if (result.affected === 0 && update.reminderAt) {
-        const current = await this.owned(userId, id);
-        if (current.status === TodoStatus.DONE) {
+
+      if ((name && name !== todo.name) || dateChanged) {
+        const nextName = name ?? todo.name;
+        const duplicated = await todos
+          .createQueryBuilder("t")
+          .where(
+            "t.name = :name AND t.user_id = :userId AND t.target_date = :targetDate AND t.id != :id",
+            { name: nextName, userId, targetDate: todo.targetDate, id },
+          )
+          .getExists();
+        if (duplicated) {
+          throw new ConflictException(`이미 사용중인 할 일명 입니다: ${nextName}`);
+        }
+        todo.name = nextName;
+      }
+
+      if (reminderAt !== undefined) {
+        const nextReminderAt = parseReminderAt(reminderAt);
+        if (nextReminderAt && todo.status === TodoStatus.DONE) {
           throw new BadRequestException(
             "완료한 할 일에는 알림을 예약할 수 없어요.",
           );
         }
+        todo.reminderAt = nextReminderAt;
+        todo.reminderTime = reminderClock(nextReminderAt);
       }
-    }
-    return todoResponse(await this.owned(userId, id));
+
+      if (repeatDaily !== undefined) {
+        todo.repeatDaily = repeatDaily;
+        if (repeatDaily) {
+          todo.repeatSeriesId ??= randomUUID();
+          todo.reminderTime ??= reminderClock(todo.reminderAt);
+        }
+      }
+
+      return todoResponse(await todos.save(todo));
+    });
   }
 
   async status(
@@ -260,11 +369,22 @@ export class TodosService {
   }
 
   async remove(userId: number, id: number): Promise<void> {
-    await this.todos.remove(await this.owned(userId, id));
+    await this.materializeDailyRepeats(new Date(), userId);
+    await this.dataSource.transaction(async (manager) => {
+      const todos = manager.getRepository(Todo);
+      await todos.remove(await this.lockOwned(todos, userId, id));
+    });
   }
 
-  private async owned(userId: number, id: number): Promise<Todo> {
-    const todo = await this.todos.findOneBy({ id, userId });
+  private async lockOwned(
+    todos: Repository<Todo>,
+    userId: number,
+    id: number,
+  ): Promise<Todo> {
+    const todo = await todos.findOne({
+      where: { id, userId },
+      lock: { mode: "pessimistic_write" },
+    });
     if (!todo) {
       throw new NotFoundException(`할 일을 찾을 수 없습니다: ${id}`);
     }
