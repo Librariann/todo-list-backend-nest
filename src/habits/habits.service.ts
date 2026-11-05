@@ -6,7 +6,7 @@ import {
 } from "@nestjs/common";
 import { Cron } from "@nestjs/schedule";
 import { InjectRepository } from "@nestjs/typeorm";
-import { Between, DataSource, Repository } from "typeorm";
+import { Between, DataSource, EntityManager, Repository } from "typeorm";
 import {
   ChallengeAchievementOutput,
   ChallengesService,
@@ -16,6 +16,7 @@ import { Habit, HabitLog, HabitStreak } from "../entities/habit.entity";
 import { today } from "../common/date";
 import type { CreateHabitDto } from "./dto/create-habits.dto";
 import type { UpdateHabitDto } from "./dto/update-habits.dto";
+import { nextHabitReminderAt, validateHabitReminder } from "./habit-reminder";
 
 export interface HabitOutput {
   id: number;
@@ -29,6 +30,8 @@ export interface HabitOutput {
   todayAchieved: boolean;
   currentStreak: number;
   longestStreak: number;
+  reminderTime: string | null;
+  reminderDays: number[];
 }
 
 export interface HabitHistoryOutput {
@@ -61,6 +64,8 @@ function response(
     todayAchieved: log?.isAchieved ?? false,
     currentStreak: streak?.currentStreak ?? 0,
     longestStreak: streak?.longestStreak ?? 0,
+    reminderTime: habit.reminderTime ?? null,
+    reminderDays: habit.reminderDays ?? [],
   };
 }
 
@@ -75,8 +80,14 @@ export class HabitsService {
     private readonly dataSource: DataSource,
   ) {}
 
-  async create(userId: number, dto: CreateHabitDto): Promise<HabitOutput> {
-    const existHabits = await this.habits.exists({
+  async create(
+    userId: number,
+    dto: CreateHabitDto,
+    manager?: EntityManager,
+  ): Promise<HabitOutput> {
+    const habits = manager?.getRepository(Habit) ?? this.habits;
+    const streaks = manager?.getRepository(HabitStreak) ?? this.streaks;
+    const existHabits = await habits.exists({
       where: { userId, name: dto.name, isActive: true },
     });
 
@@ -86,12 +97,26 @@ export class HabitsService {
       );
     }
 
-    const habit = await this.habits.save(
-      this.habits.create({ ...dto, userId, isActive: true }),
+    const reminderTime = dto.reminderTime ?? null;
+    const reminderDays = dto.reminderDays ?? [];
+    validateHabitReminder(reminderTime, reminderDays);
+    const habit = await habits.save(
+      habits.create({
+        ...dto,
+        userId,
+        isActive: true,
+        reminderTime,
+        reminderDays: reminderTime ? [...reminderDays].sort() : [],
+        nextReminderAt: nextHabitReminderAt(
+          new Date(),
+          reminderTime,
+          reminderDays,
+        ),
+      }),
     );
 
-    const streak = await this.streaks.save(
-      this.streaks.create({
+    const streak = await streaks.save(
+      streaks.create({
         habitId: habit.id,
         userId,
         currentStreak: 0,
@@ -139,20 +164,41 @@ export class HabitsService {
       );
     }
 
-    Object.assign(getHabits, dto);
-    await this.habits.save(getHabits);
+    const { reminderTime: newTime, reminderDays: newDays, ...changes } = dto;
+    const update: Partial<Habit> = { ...changes };
+    if (newTime !== undefined || newDays !== undefined) {
+      const reminderTime =
+        newTime !== undefined ? newTime : (getHabits.reminderTime ?? null);
+      const reminderDays =
+        newDays !== undefined ? newDays : (getHabits.reminderDays ?? []);
+      validateHabitReminder(reminderTime, reminderDays);
+      update.reminderTime = reminderTime;
+      update.reminderDays = reminderTime ? [...reminderDays].sort() : [];
+      update.nextReminderAt = nextHabitReminderAt(
+        new Date(),
+        reminderTime,
+        reminderDays,
+        getHabits.lastReminderDate ?? null,
+      );
+    }
+    if (Object.keys(update).length > 0) {
+      await this.habits.update({ id, userId, isActive: true }, update);
+    }
+    const updated = await this.owned(userId, id);
 
     return response(
-      getHabits,
+      updated,
       await this.logs.findOneBy({ habitId: id, logDate: today() }),
       await this.streaks.findOneBy({ habitId: id, userId }),
     );
   }
 
   async deactivate(userId: number, id: number): Promise<void> {
-    const getHabits = await this.owned(userId, id);
-    getHabits.isActive = false;
-    await this.habits.save(getHabits);
+    await this.owned(userId, id);
+    await this.habits.update(
+      { id, userId },
+      { isActive: false, nextReminderAt: null },
+    );
   }
   async increment(userId: number, id: number): Promise<HabitIncrementOutput> {
     return this.dataSource.transaction(async (manager) => {
