@@ -126,7 +126,7 @@ describe("TodosService.markedDates", () => {
     const service = new TodosService(
       { find } as never,
       {} as never,
-      {} as never,
+      { query: jest.fn() } as never,
     );
 
     await expect(
