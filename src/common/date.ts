@@ -4,8 +4,8 @@ export enum PeriodType {
   MONTHLY = "MONTHLY",
 }
 
-export const today = (): string =>
-  new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Seoul" });
+export const today = (now = new Date()): string =>
+  now.toLocaleDateString("sv-SE", { timeZone: "Asia/Seoul" });
 
 const DAY_IN_MILLISECONDS = 86_400_000;
 
