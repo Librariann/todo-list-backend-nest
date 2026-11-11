@@ -1,10 +1,12 @@
 import {
+  IsBoolean,
   IsDateString,
   IsOptional,
   IsString,
   Matches,
   MaxLength,
   MinLength,
+  ValidateIf,
 } from "class-validator";
 
 export class UpdateTodoDto {
@@ -24,4 +26,8 @@ export class UpdateTodoDto {
     message: "알림 시간에 시간대가 필요합니다.",
   })
   reminderAt?: string | null;
+
+  @ValidateIf((_dto, value) => value !== undefined)
+  @IsBoolean()
+  repeatDaily?: boolean;
 }
