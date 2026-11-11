@@ -92,11 +92,39 @@ describeDatabase("daily todo repeats in PostgreSQL", () => {
     }
   });
 
+  it("stores reminders on the todo date using the requested Seoul clock time", async () => {
+    const targetDate = dateAfter(2);
+    const original = await service.create(user.id, {
+      name: "저녁 할 일",
+      targetDate,
+      reminderAt: `${dateAfter(3)}T15:15:00Z`,
+    });
+    expect(original.reminderAt).toEqual(new Date(`${targetDate}T00:15:00+09:00`));
+
+    const updated = await service.update(user.id, original.id, {
+      reminderAt: `${dateAfter(4)}T19:30:00+09:00`,
+      repeatDaily: true,
+    });
+    expect(updated.repeatReminderTime).toBe("19:30");
+    expect(await service.list(user.id, targetDate)).toEqual([
+      expect.objectContaining({ reminderAt: new Date(`${targetDate}T19:30:00+09:00`) }),
+    ]);
+
+    await expect(service.create(user.id, {
+      name: "이미 지난 알림",
+      targetDate: currentDay,
+      reminderAt: `${dateAfter(3)}T00:00:00+09:00`,
+    })).rejects.toBeInstanceOf(BadRequestException);
+  });
+
   it("generates one fresh occurrence per series after KST midnight, even concurrently", async () => {
     const original = await service.create(user.id, {
       name: "매일 공부하기",
       targetDate: currentDay,
-      reminderAt: `${dateAfter(1)}T09:15:00+09:00`,
+    });
+    await db.getRepository(Todo).update(original.id, {
+      reminderAt: new Date(`${currentDay}T09:15:00+09:00`),
+      reminderTime: "09:15",
     });
     expect(original.repeatDaily).toBe(false);
     await service.update(user.id, original.id, { repeatDaily: true });
@@ -136,9 +164,11 @@ describeDatabase("daily todo repeats in PostgreSQL", () => {
     const original = await service.create(user.id, {
       name: "아침 기록",
       targetDate: currentDay,
-      reminderAt: `${dateAfter(1)}T08:00:00+09:00`,
     });
-    await db.getRepository(Todo).update(original.id, { reminderAt: null });
+    await db.getRepository(Todo).update(original.id, {
+      reminderAt: null,
+      reminderTime: "08:00",
+    });
     const enabled = await service.update(user.id, original.id, {
       repeatDaily: true,
     });
@@ -208,7 +238,7 @@ describeDatabase("daily todo repeats in PostgreSQL", () => {
   it("honors an explicit reminder clear, prevents changing other users’ or past repeats, and stops on disable/delete", async () => {
     const original = await service.create(user.id, {
       name: "매일 계획",
-      targetDate: currentDay,
+      targetDate: dateAfter(1),
       reminderAt: `${dateAfter(1)}T19:30:00+09:00`,
     });
     await service.update(user.id, original.id, { repeatDaily: true });
@@ -230,14 +260,14 @@ describeDatabase("daily todo repeats in PostgreSQL", () => {
 
     await service.update(user.id, original.id, { repeatDaily: false });
     await service.materializeDailyRepeats(
-      new Date(`${dateAfter(1)}T00:00:00+09:00`),
-    );
-    expect(await service.list(user.id, dateAfter(1))).toEqual([]);
-    await service.update(user.id, original.id, { repeatDaily: true });
-    await service.remove(user.id, original.id);
-    await service.materializeDailyRepeats(
       new Date(`${dateAfter(2)}T00:00:00+09:00`),
     );
     expect(await service.list(user.id, dateAfter(2))).toEqual([]);
+    await service.update(user.id, original.id, { repeatDaily: true });
+    await service.remove(user.id, original.id);
+    await service.materializeDailyRepeats(
+      new Date(`${dateAfter(3)}T00:00:00+09:00`),
+    );
+    expect(await service.list(user.id, dateAfter(3))).toEqual([]);
   });
 });

@@ -57,10 +57,20 @@ function todoResponse(todo: Todo): TodoOutput {
   };
 }
 
-function parseReminderAt(value: string | null | undefined): Date | null {
+const KOREAN_TIMEZONE = "Asia/Seoul";
+
+function parseReminderAt(
+  value: string | null | undefined,
+  targetDate: string,
+): Date | null {
   if (value == null) return null;
-  const reminderAt = new Date(value);
+  const requested = new Date(value);
+  const clock = Number.isFinite(requested.getTime())
+    ? reminderClock(requested)
+    : null;
+  const reminderAt = clock ? new Date(`${targetDate}T${clock}:00+09:00`) : null;
   if (
+    !reminderAt ||
     !Number.isFinite(reminderAt.getTime()) ||
     reminderAt.getTime() <= Date.now()
   ) {
@@ -70,8 +80,6 @@ function parseReminderAt(value: string | null | undefined): Date | null {
   }
   return reminderAt;
 }
-
-const KOREAN_TIMEZONE = "Asia/Seoul";
 
 function reminderClock(reminderAt: Date | null): string | null {
   return reminderAt ? localClock(reminderAt, KOREAN_TIMEZONE).time : null;
@@ -219,7 +227,7 @@ export class TodosService implements OnApplicationBootstrap {
       order: { orderIndex: "DESC" },
     });
 
-    const reminderAt = parseReminderAt(dto.reminderAt);
+    const reminderAt = parseReminderAt(dto.reminderAt, targetDate);
     const todo = await todos.save(
       todos.create({
         userId,
@@ -278,8 +286,11 @@ export class TodosService implements OnApplicationBootstrap {
         todo.name = nextName;
       }
 
-      if (reminderAt !== undefined) {
-        const nextReminderAt = parseReminderAt(reminderAt);
+      if (reminderAt !== undefined || (dateChanged && todo.reminderAt)) {
+        const nextReminderAt = parseReminderAt(
+          reminderAt === undefined ? todo.reminderAt?.toISOString() : reminderAt,
+          todo.targetDate,
+        );
         if (nextReminderAt && todo.status === TodoStatus.DONE) {
           throw new BadRequestException(
             "완료한 할 일에는 알림을 예약할 수 없어요.",
